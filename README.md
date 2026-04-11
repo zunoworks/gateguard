@@ -39,7 +39,7 @@ rework.
 ## Install
 
 ```bash
-pip install gateguard
+pip install gateguard-ai
 ```
 
 ## Quick start
