@@ -1,0 +1,135 @@
+"""Shared session state for GateGuard hook.
+
+Tracks which files have been Read (for Gate 1: Read-before-Edit)
+and which targets have been gated once this session (for Gate 2: Fact-forcing).
+
+State lives at ~/.gateguard/.session_state.json.
+File locking prevents corruption from concurrent hook invocations.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from tempfile import NamedTemporaryFile
+from typing import Callable, TextIO
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - unavailable on Windows
+    fcntl = None
+
+try:
+    import msvcrt
+except ImportError:  # pragma: no cover - unavailable on POSIX
+    msvcrt = None
+
+
+STATE_DIR = Path.home() / ".gateguard"
+STATE_FILE = STATE_DIR / ".session_state.json"
+LOCK_FILE = STATE_DIR / ".session_state.lock"
+
+DEFAULT_STATE: dict = {
+    "read_files": [],
+    "gated_targets": [],
+}
+
+
+def _lock_handle() -> TextIO:
+    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    handle = LOCK_FILE.open("a+", encoding="utf-8")
+    handle.seek(0)
+    if not handle.read(1):
+        handle.write("0")
+        handle.flush()
+    handle.seek(0)
+
+    if fcntl is not None:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        return handle
+
+    if msvcrt is not None:
+        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        return handle
+
+    handle.close()
+    raise RuntimeError("File locking is not supported on this platform")
+
+
+def _unlock_handle(handle: TextIO) -> None:
+    try:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            return
+        if msvcrt is not None:
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            return
+    finally:
+        handle.close()
+
+
+def _read_unlocked() -> dict:
+    if not STATE_FILE.exists():
+        return {"read_files": [], "gated_targets": []}
+    try:
+        payload = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {"read_files": [], "gated_targets": []}
+    if not isinstance(payload, dict):
+        return {"read_files": [], "gated_targets": []}
+    read_files = payload.get("read_files") or []
+    gated = payload.get("gated_targets") or []
+    return {
+        "read_files": list(read_files) if isinstance(read_files, list) else [],
+        "gated_targets": list(gated) if isinstance(gated, list) else [],
+    }
+
+
+def _write_unlocked(state: dict) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        dir=STATE_DIR,
+        prefix=".session_state-",
+        suffix=".tmp",
+        delete=False,
+    ) as tmp:
+        json.dump(state, tmp, ensure_ascii=False)
+        tmp.flush()
+        os.fsync(tmp.fileno())
+        tmp_path = Path(tmp.name)
+    os.replace(tmp_path, STATE_FILE)
+
+
+def load_state() -> dict:
+    handle = _lock_handle()
+    try:
+        return _read_unlocked()
+    finally:
+        _unlock_handle(handle)
+
+
+def update_state(mutator: Callable[[dict], dict | None]) -> dict:
+    handle = _lock_handle()
+    try:
+        current = _read_unlocked()
+        updated = mutator(dict(current))
+        final = current if updated is None else updated
+        _write_unlocked(final)
+        return final
+    finally:
+        _unlock_handle(handle)
+
+
+def clear_state() -> None:
+    handle = _lock_handle()
+    try:
+        try:
+            STATE_FILE.unlink(missing_ok=True)
+        except OSError:
+            _write_unlocked(dict(DEFAULT_STATE))
+    finally:
+        _unlock_handle(handle)

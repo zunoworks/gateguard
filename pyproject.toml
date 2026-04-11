@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gateguard"
+version = "0.2.0"
+description = "A fact-forcing hook gate for Claude Code. Makes the AI pause and investigate before editing."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "Hirokazu Seto" }]
+keywords = ["claude", "claude-code", "hook", "ai", "guardrail", "llm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[project.scripts]
+gateguard = "gateguard.cli:main"
+gateguard-hook = "gateguard.hook:main"
+gateguard-read-tracker = "gateguard.read_tracker:main"
+
+[project.urls]
+Homepage = "https://github.com/setohirokazu/gateguard"
+Issues = "https://github.com/setohirokazu/gateguard/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gateguard"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
