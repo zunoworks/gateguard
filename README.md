@@ -24,7 +24,7 @@ analytics module that integrates with an existing codebase.
 | **Quality score** | **8.0 / 10** | **6.5 / 10** |
 | Tool calls | 11 | 21 |
 | Time | 114s | 142s |
-| Ghost subsystem integration | Yes | **Missed** |
+| Internal subsystem integration | Yes | **Missed** |
 | Zero-filled daily data | Yes | **Missing** |
 | Extra metrics (avg/day) | Yes | **Missing** |
 
