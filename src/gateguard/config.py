@@ -120,7 +120,7 @@ def load_config(start: Path | None = None) -> Config:
 def default_config_yaml() -> str:
     """Return the canonical `.gateguard.yml` contents written by `gateguard init`."""
     return """# GateGuard project configuration
-# Docs: https://github.com/setohirokazu/gateguard
+# Docs: https://github.com/zunoworks/gateguard
 
 enabled: true
 
