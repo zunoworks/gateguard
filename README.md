@@ -16,25 +16,24 @@ needle.
 
 ## Evidence: A/B test results
 
-We tested two identical Claude Code agents on the same task — creating a new
-analytics module that integrates with an existing codebase.
+We ran two identical Claude Code agents on the same task — one with GateGuard,
+one without. Two independent tasks, scored on a 10-point rubric (code structure,
+edge cases, pattern compliance, test quality, design decisions).
 
-| Metric | With GateGuard | Without GateGuard |
-| --- | --- | --- |
-| **Quality score** | **8.0 / 10** | **6.5 / 10** |
-| Tool calls | 11 | 21 |
-| Time | 114s | 142s |
-| Internal subsystem integration | Yes | **Missed** |
-| Zero-filled daily data | Yes | **Missing** |
-| Extra metrics (avg/day) | Yes | **Missing** |
+| Task | With GateGuard | Without GateGuard | Gap |
+| --- | --- | --- | --- |
+| Analytics module (codebase integration) | **8.0 / 10** | 6.5 / 10 | +1.5 |
+| Webhook validator (data parsing) | **10.0 / 10** | 7.0 / 10 | +3.0 |
+| **Average** | **9.0** | **6.75** | **+2.25** |
 
-The quality gap comes from investigation depth. The gated agent was forced to
-read existing code patterns before writing — so it discovered subsystem
-integration points that the ungated agent simply guessed at (incorrectly).
+The gated agent was forced to read existing code before writing — so it matched
+project patterns, discovered integration points, and handled edge cases that the
+ungated agent missed entirely. Both agents produced code that runs and passes
+tests. The difference is design depth: the ungated agent guesses; the gated
+agent investigates.
 
 These are the errors tests don't catch: the code runs, but the design is shallow.
-Over a 10-file project, this 1.5-point-per-file gap compounds into significant
-rework.
+Over a multi-file project, this 2+ point gap compounds into significant rework.
 
 ## Install
 
