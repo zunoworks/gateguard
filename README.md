@@ -1,5 +1,7 @@
 # GateGuard
 
+![PyPI](https://img.shields.io/pypi/v/gateguard-ai) ![Python](https://img.shields.io/pypi/pyversions/gateguard-ai) ![License](https://img.shields.io/pypi/l/gateguard-ai) ![CI](https://github.com/zunoworks/gateguard/actions/workflows/ci.yml/badge.svg)
+
 **A fact-forcing hook gate for Claude Code.**
 
 GateGuard makes Claude Code pause and investigate before it edits your files.
