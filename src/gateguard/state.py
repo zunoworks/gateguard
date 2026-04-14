@@ -3,7 +3,8 @@
 Tracks which files have been Read (for Gate 1: Read-before-Edit)
 and which targets have been gated once this session (for Gate 2: Fact-forcing).
 
-State lives at ~/.gateguard/.session_state.json.
+State lives at ~/.gateguard/.session_state_{session_id}.json (one file per
+CLI session to prevent cross-session state leakage).
 File locking prevents corruption from concurrent hook invocations.
 """
 
