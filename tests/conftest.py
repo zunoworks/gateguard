@@ -17,8 +17,6 @@ def isolated_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     from gateguard import state as state_mod
 
     monkeypatch.setattr(state_mod, "STATE_DIR", state_dir)
-    monkeypatch.setattr(state_mod, "STATE_FILE", state_dir / ".session_state.json")
-    monkeypatch.setattr(state_mod, "LOCK_FILE", state_dir / ".session_state.lock")
     monkeypatch.setattr(log_mod, "GATE_LOG_PATH", state_dir / "gate_log.jsonl")
 
     return state_dir

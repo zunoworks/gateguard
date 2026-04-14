@@ -11,7 +11,7 @@ from pathlib import Path
 from . import __version__
 from .config import CONFIG_FILENAME, default_config_yaml
 from .log import GATE_LOG_PATH
-from .state import STATE_FILE, clear_state
+from .state import _state_file, clear_state
 
 
 CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
@@ -154,7 +154,7 @@ def cmd_logs(args: argparse.Namespace) -> int:
 
 def cmd_reset(_: argparse.Namespace) -> int:
     clear_state()
-    print(f"Cleared {STATE_FILE}")
+    print(f"Cleared {_state_file()}")
     return 0
 
 

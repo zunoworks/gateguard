@@ -9,8 +9,10 @@ File locking prevents corruption from concurrent hook invocations.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Callable, TextIO
@@ -26,9 +28,58 @@ except ImportError:  # pragma: no cover - unavailable on POSIX
     msvcrt = None
 
 
-STATE_DIR = Path.home() / ".gateguard"
-STATE_FILE = STATE_DIR / ".session_state.json"
-LOCK_FILE = STATE_DIR / ".session_state.lock"
+STATE_DIR = Path(os.environ.get("GATEGUARD_STATE_DIR", "")) or Path.home() / ".gateguard"
+
+_SAFE_CHARS = re.compile(r"[^a-zA-Z0-9_\-]")
+_MAX_ID_LEN = 64
+
+
+def _sanitize_id(raw: str) -> str:
+    """Sanitize a session ID for safe use as a filename component."""
+    cleaned = _SAFE_CHARS.sub("_", raw)
+    if len(cleaned) > _MAX_ID_LEN or cleaned != raw:
+        return hashlib.sha256(raw.encode()).hexdigest()[:16]
+    return cleaned
+
+
+def _resolve_session_id() -> str:
+    """Resolve a stable, per-session identifier.
+
+    Priority:
+      1. CLAUDE_SESSION_ID (native Claude Code)
+      2. ECC_SESSION_ID (everything-claude-code)
+      3. CLAUDE_TRANSCRIPT_PATH (hashed — unique per session)
+      4. Fallback: hash of project dir + parent PID (stable within one CLI session)
+    """
+    sid = os.environ.get("CLAUDE_SESSION_ID", "")
+    if sid:
+        return _sanitize_id(sid)
+
+    sid = os.environ.get("ECC_SESSION_ID", "")
+    if sid:
+        return _sanitize_id(sid)
+
+    transcript = os.environ.get("CLAUDE_TRANSCRIPT_PATH", "")
+    if transcript:
+        return hashlib.sha256(transcript.encode()).hexdigest()[:16]
+
+    # Fallback: project dir + parent PID for per-CLI-session isolation
+    project = os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
+    ppid = os.getppid()
+    fingerprint = f"{project}:{ppid}"
+    return hashlib.sha256(fingerprint.encode()).hexdigest()[:16]
+
+
+def _state_file() -> Path:
+    """Return the session-specific state file path."""
+    sid = _resolve_session_id()
+    return STATE_DIR / f".session_state_{sid}.json"
+
+
+def _lock_file() -> Path:
+    """Return the session-specific lock file path."""
+    sid = _resolve_session_id()
+    return STATE_DIR / f".session_state_{sid}.lock"
 
 DEFAULT_STATE: dict = {
     "read_files": [],
@@ -37,8 +88,9 @@ DEFAULT_STATE: dict = {
 
 
 def _lock_handle() -> TextIO:
-    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    handle = LOCK_FILE.open("a+", encoding="utf-8")
+    lf = _lock_file()
+    lf.parent.mkdir(parents=True, exist_ok=True)
+    handle = lf.open("a+", encoding="utf-8")
     handle.seek(0)
     if not handle.read(1):
         handle.write("0")
@@ -71,10 +123,11 @@ def _unlock_handle(handle: TextIO) -> None:
 
 
 def _read_unlocked() -> dict:
-    if not STATE_FILE.exists():
+    sf = _state_file()
+    if not sf.exists():
         return {"read_files": [], "gated_targets": []}
     try:
-        payload = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        payload = json.loads(sf.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return {"read_files": [], "gated_targets": []}
     if not isinstance(payload, dict):
@@ -88,11 +141,12 @@ def _read_unlocked() -> dict:
 
 
 def _write_unlocked(state: dict) -> None:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    sf = _state_file()
+    sf.parent.mkdir(parents=True, exist_ok=True)
     with NamedTemporaryFile(
         "w",
         encoding="utf-8",
-        dir=STATE_DIR,
+        dir=sf.parent,
         prefix=".session_state-",
         suffix=".tmp",
         delete=False,
@@ -101,7 +155,7 @@ def _write_unlocked(state: dict) -> None:
         tmp.flush()
         os.fsync(tmp.fileno())
         tmp_path = Path(tmp.name)
-    os.replace(tmp_path, STATE_FILE)
+    os.replace(tmp_path, sf)
 
 
 def load_state() -> dict:
@@ -128,7 +182,7 @@ def clear_state() -> None:
     handle = _lock_handle()
     try:
         try:
-            STATE_FILE.unlink(missing_ok=True)
+            _state_file().unlink(missing_ok=True)
         except OSError:
             _write_unlocked(dict(DEFAULT_STATE))
     finally:
