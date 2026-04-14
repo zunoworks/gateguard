@@ -16,24 +16,31 @@ needle.
 
 ## Evidence: A/B test results
 
-We ran two identical Claude Code agents on the same task — one with GateGuard,
-one without. Two independent tasks, scored on a 10-point rubric (code structure,
-edge cases, pattern compliance, test quality, design decisions).
+Three tasks, scored on a 10-point rubric (code structure, edge cases, pattern
+compliance, test quality, design decisions). GateGuard hooks were physically
+active — not prompt injection. The ungated agent ran without hooks.
 
 | Task | With GateGuard | Without GateGuard | Gap |
 | --- | --- | --- | --- |
 | Analytics module (codebase integration) | **8.0 / 10** | 6.5 / 10 | +1.5 |
 | Webhook validator (data parsing) | **10.0 / 10** | 7.0 / 10 | +3.0 |
-| **Average** | **9.0** | **6.75** | **+2.25** |
+| Analytics module (re-test, v0.3.0) | **8.0 / 10** | 6.5 / 10 | +1.5 |
+| **Average** | **8.7** | **6.7** | **+2.0** |
 
-The gated agent was forced to read existing code before writing — so it matched
-project patterns, discovered integration points, and handled edge cases that the
-ungated agent missed entirely. Both agents produced code that runs and passes
-tests. The difference is design depth: the ungated agent guesses; the gated
-agent investigates.
+Where the gap comes from:
+
+- **Conflict detection**: The gated agent spotted mismatches between existing
+  code patterns and the user's instruction, then followed the instruction.
+  The ungated agent silently deviated (e.g. using threshold 0.6 when the
+  codebase uses 0.7).
+- **Data verification**: The gated agent checked real data records and used
+  the correct schema keys. The ungated agent assumed a schema and missed
+  `source_law_ids` / `source_ghost_ids` fields entirely.
+- **Pattern compliance**: The gated agent matched existing dataclass patterns.
+  The ungated agent returned plain dicts.
 
 These are the errors tests don't catch: the code runs, but the design is shallow.
-Over a multi-file project, this 2+ point gap compounds into significant rework.
+Over a multi-file project, this 2-point gap compounds into significant rework.
 
 ## Install
 
@@ -64,8 +71,8 @@ Restart Claude Code and the gate is active.
 | Gate | Trigger | What Claude must do |
 | --- | --- | --- |
 | **Read-before-Edit** | `Edit` on a file not yet `Read` this session | Read the file first |
-| **Fact-force Edit** | First `Edit` per file | List importers, affected public API, verify data schemas from real records, quote the user's instruction |
-| **Fact-force Write** | First `Write` per file | Name call sites, confirm no duplicate exists, verify data schemas, quote the instruction |
+| **Fact-force Edit** | First `Edit` per file | Quote the user's instruction, list importers, detect conflicts between existing patterns and instruction (instruction wins), verify data schemas from real records |
+| **Fact-force Write** | First `Write` per file | Quote the user's instruction, confirm no duplicate exists, detect conflicts (instruction wins), verify data schemas |
 | **Fact-force destructive Bash** | `rm -rf`, `git reset --hard`, `drop table`, etc. | List what will be destroyed, give a rollback, quote the instruction |
 | **Fact-force routine Bash** | First `Bash` per session | Quote the user's current instruction |
 
@@ -79,9 +86,10 @@ ISO-8601 dates and bare JSON arrays. The real data used `%Y/%m/%d %H:%M` dates
 and `{"schema_version": "1.0", "items": [...]}` wrappers. Both agents got this
 wrong — because neither actually looked at the data.
 
-v0.2.0 adds a new gate item: *"If this file reads/writes data files, cat one
-real record and show the actual field names, structure, and date format."* This
-forces the LLM to verify assumptions against reality before writing code.
+The gate forces the LLM to verify assumptions against reality before writing
+code. v0.3.0 adds **conflict detection**: when existing code patterns contradict
+the user's instruction, the gate forces the LLM to state the conflict explicitly
+— then follow the instruction, not the buggy pattern.
 
 ## Configuration
 
@@ -123,7 +131,7 @@ gateguard --version
 
 - `init` — write `.gateguard.yml` and register both hooks
 - `logs` — print recent gate events from `~/.gateguard/gate_log.jsonl`
-- `reset` — clear the in-session state (`~/.gateguard/.session_state.json`)
+- `reset` — clear the current session's state file (`~/.gateguard/.session_state_{id}.json`)
 
 ## How it works
 
