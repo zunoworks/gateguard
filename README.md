@@ -42,6 +42,29 @@ Where the gap comes from:
 These are the errors tests don't catch: the code runs, but the design is shallow.
 Over a multi-file project, this 2-point gap compounds into significant rework.
 
+### How we tested
+
+1. **Gated condition**: The tester ran Claude Code with GateGuard hooks
+   physically registered in `~/.claude/settings.json`. Every `Edit`, `Write`,
+   and `Bash` triggered a real `PreToolUse` deny — the LLM was forced to
+   investigate before retrying. This is not prompt injection — the hook
+   blocks the tool call at the Claude Code runtime level.
+
+2. **Ungated condition**: A separate Claude Code Agent (subagent) executed the
+   same task with no hooks registered. Agents do not inherit the parent
+   session's hooks, so this is a genuine no-gate baseline.
+
+3. **Same task, same codebase**: Both conditions received identical prompts
+   and worked on the same source tree (reset via `git checkout` between runs).
+
+4. **Scoring**: 5 criteria × 2 points each = 10-point rubric.
+   Code structure, edge case handling, pattern compliance, test quality,
+   design decisions. Scored after comparing diffs side by side.
+
+5. **Limitations**: N=3 tasks, self-scored (potential bias). The gated tester
+   had seen prior results in the same session. A clean replication would use
+   a fresh session with no prior exposure to the task.
+
 ## Install
 
 ```bash
