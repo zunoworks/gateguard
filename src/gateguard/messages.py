@@ -9,24 +9,28 @@ from __future__ import annotations
 
 DEFAULT_EDIT = (
     "[GateGuard — fact-forcing gate]\n\n"
-    "Before editing {file_path}, present the following facts:\n\n"
-    "1. List every file that imports/requires this file (use Grep).\n"
-    "2. List the public functions and classes your change will affect.\n"
-    "3. If this file reads/writes data files, show field names, structure, and date format "
-    "(use redacted or synthetic values, not raw production data).\n"
-    "4. Quote the user's current instruction verbatim "
-    "(to confirm the change is in scope).\n\n"
+    "Before editing {file_path}, follow these steps in order:\n\n"
+    "1. Quote the user's current instruction verbatim "
+    "(to confirm the change is in scope).\n"
+    "2. List every file that imports/requires this file (use Grep).\n"
+    "3. If the existing code's patterns conflict with the user's instruction, "
+    "state the conflict explicitly. When in conflict, the user's instruction takes priority.\n"
+    "4. If this file reads/writes data files, check one real record and verify "
+    "field names, structure, and date format match your implementation "
+    "(use redacted or synthetic values, not raw production data).\n\n"
     "Present the facts, then retry the same operation."
 )
 
 DEFAULT_WRITE = (
     "[GateGuard — fact-forcing gate]\n\n"
-    "Before creating {file_path}, present the following facts:\n\n"
-    "1. Name the call sites (file and line) where this file will be used.\n"
+    "Before creating {file_path}, follow these steps in order:\n\n"
+    "1. Quote the user's current instruction verbatim.\n"
     "2. Use Glob to confirm no existing file already provides this.\n"
-    "3. If this file will read/write data files, show field names, structure, and date format "
-    "(use redacted or synthetic values, not raw production data).\n"
-    "4. Quote the user's current instruction verbatim.\n\n"
+    "3. If the existing code's patterns conflict with the user's instruction, "
+    "state the conflict explicitly. When in conflict, the user's instruction takes priority.\n"
+    "4. If this file will read/write data files, check one real record and verify "
+    "field names, structure, and date format match your implementation "
+    "(use redacted or synthetic values, not raw production data).\n\n"
     "Present the facts, then retry the same operation."
 )
 
