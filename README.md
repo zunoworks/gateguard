@@ -65,6 +65,16 @@ Over a multi-file project, this 2-point gap compounds into significant rework.
    had seen prior results in the same session. A clean replication would use
    a fresh session with no prior exposure to the task.
 
+## Recommended models
+
+- **Claude Opus 4.7** — primary target, dogfooded for v0.4.0
+- **Claude Sonnet 4.6** — expected to work, not benchmarked
+- **Haiku 4.5 / older** — may retry instead of investigate; YMMV
+
+GateGuard's hooks are model-agnostic at the protocol layer, but the
+quality gain depends on the model treating a `PreToolUse` deny as a
+cue to gather facts, not to retry the same call.
+
 ## Install
 
 ```bash
