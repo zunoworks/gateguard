@@ -40,6 +40,10 @@ class GateConfig:
     fact_force_write: bool = True
     fact_force_bash_destructive: bool = True
     fact_force_bash_routine: bool = True
+    # v0.4.0: post-implementation bughunt reminder. Opt-in so that
+    # `pip install --upgrade gateguard-ai` does not change behaviour for
+    # existing users. Enable via `.gateguard.yml` → gates.bughunt_gate: true.
+    bughunt_gate: bool = False
 
 
 @dataclass
@@ -98,6 +102,7 @@ def load_config(start: Path | None = None) -> Config:
             "fact_force_write",
             "fact_force_bash_destructive",
             "fact_force_bash_routine",
+            "bughunt_gate",
         ):
             if key in gates_raw and isinstance(gates_raw[key], bool):
                 setattr(gc, key, gates_raw[key])
@@ -132,6 +137,9 @@ gates:
   fact_force_write: true
   fact_force_bash_destructive: true
   fact_force_bash_routine: true
+  # v0.4.0: Bughunt gate — after 3 Edit/Write without a test/build run,
+  # deny the next operation and remind the LLM to verify. Opt-in.
+  bughunt_gate: false
 
 # Additional destructive shell patterns (regex, OR-joined with built-ins)
 destructive_bash_extra: []

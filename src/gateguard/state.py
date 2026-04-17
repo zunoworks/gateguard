@@ -133,12 +133,15 @@ def _read_unlocked() -> dict:
         return {"read_files": [], "gated_targets": []}
     if not isinstance(payload, dict):
         return {"read_files": [], "gated_targets": []}
-    read_files = payload.get("read_files") or []
-    gated = payload.get("gated_targets") or []
-    return {
-        "read_files": list(read_files) if isinstance(read_files, list) else [],
-        "gated_targets": list(gated) if isinstance(gated, list) else [],
-    }
+    # Preserve every key the payload carries so callers can add new fields
+    # (e.g., the v0.4.0 bughunt gate counters) without state.py knowing
+    # their schema. Types are enforced only on the two core fields.
+    result = dict(payload)
+    read_files = result.get("read_files") or []
+    gated = result.get("gated_targets") or []
+    result["read_files"] = list(read_files) if isinstance(read_files, list) else []
+    result["gated_targets"] = list(gated) if isinstance(gated, list) else []
+    return result
 
 
 def _write_unlocked(state: dict) -> None:

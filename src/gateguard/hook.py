@@ -19,13 +19,22 @@ import fnmatch
 import json
 import re
 import sys
+import time
 from typing import Any
 
+from .bughunt import (
+    bughunt_gate_should_fire,
+    is_bughunt_command,
+    mark_gate_fired,
+    record_bughunt,
+    record_edit,
+)
 from .config import Config, load_config
 from .log import log_event
 from .messages import (
     bash_destructive_gate,
     bash_routine_gate,
+    bughunt_gate_msg,
     edit_gate_msg,
     write_gate_msg,
 )
@@ -74,16 +83,35 @@ def _handle_edit_or_write(
     tool_name: str,
     tool_input: dict[str, Any],
     cfg: Config,
-) -> None:
+) -> bool:
+    """Returns True if the op was allowed AND should count toward bughunt tracking.
+
+    Returns False for deny paths and for "ignored" paths (ops on .venv/** etc.
+    are real edits but should not make the bughunt budget tick).
+    """
     file_path = tool_input.get("file_path", "")
     if not file_path:
-        return
+        return False
 
     if _is_ignored(file_path, cfg.ignore_paths):
         log_event(tool_name, tool_input, "ignored", "allow")
-        return
+        return False
 
     state = load_state()
+    now = time.time()
+
+    # Gate 0 (v0.4.0): Bughunt gate — opt-in via cfg.gates.bughunt_gate.
+    # Fires before any other gate so the reminder arrives at the start of the
+    # next batch of edits, not after one more deny cycle.
+    if cfg.gates.bughunt_gate and bughunt_gate_should_fire(state, now=now):
+        update_state(lambda s: mark_gate_fired(s, now))
+        _deny(
+            bughunt_gate_msg(cfg.messages),
+            tool_name=tool_name,
+            tool_input=tool_input,
+            gate_type="bughunt_gate",
+        )
+        return False
 
     # Gate 1: Read-before-Edit (only applies to Edit — Write creates new files)
     if tool_name == "Edit" and cfg.gates.read_before_edit:
@@ -96,7 +124,7 @@ def _handle_edit_or_write(
                 tool_input=tool_input,
                 gate_type="read_before_edit",
             )
-            return
+            return False
 
     # Gate 2: Fact-forcing (first action per file)
     fact_enabled = (
@@ -105,12 +133,12 @@ def _handle_edit_or_write(
     )
     if not fact_enabled:
         log_event(tool_name, tool_input, "disabled", "allow")
-        return
+        return True
 
     gated = set(state.get("gated_targets", []))
     if file_path in gated:
         log_event(tool_name, tool_input, "passed", "allow")
-        return
+        return True
 
     def _mark(s: dict) -> dict:
         targets = list(s.get("gated_targets", []))
@@ -127,16 +155,34 @@ def _handle_edit_or_write(
         msg = write_gate_msg(file_path, cfg.messages)
 
     _deny(msg, tool_name=tool_name, tool_input=tool_input, gate_type="fact_force")
+    return False
 
 
-def _handle_bash(tool_input: dict[str, Any], cfg: Config) -> None:
+def _handle_bash(tool_input: dict[str, Any], cfg: Config) -> bool:
+    """Returns True if the op was allowed AND should count toward bughunt tracking."""
     command = tool_input.get("command", "")
     if not command:
-        return
+        return False
 
     if _is_ignored(command, cfg.ignore_paths):
         log_event("Bash", tool_input, "ignored", "allow")
-        return
+        return False
+
+    # Gate 0 (v0.4.0): Bughunt gate — opt-in.
+    # Skip when the command itself is a bughunt run (pytest, npm test, etc.);
+    # denying the clearing command would be circular.
+    if cfg.gates.bughunt_gate and not is_bughunt_command(command):
+        state = load_state()
+        now = time.time()
+        if bughunt_gate_should_fire(state, now=now):
+            update_state(lambda s: mark_gate_fired(s, now))
+            _deny(
+                bughunt_gate_msg(cfg.messages),
+                tool_name="Bash",
+                tool_input=tool_input,
+                gate_type="bughunt_gate",
+            )
+            return False
 
     destructive_re = _compile_destructive(cfg)
     if cfg.gates.fact_force_bash_destructive and destructive_re.search(command):
@@ -146,17 +192,17 @@ def _handle_bash(tool_input: dict[str, Any], cfg: Config) -> None:
             tool_input=tool_input,
             gate_type="fact_force_destructive",
         )
-        return
+        return False
 
     if not cfg.gates.fact_force_bash_routine:
         log_event("Bash", tool_input, "disabled", "allow")
-        return
+        return True
 
     state = load_state()
     gated = set(state.get("gated_targets", []))
     if "__bash_session__" in gated:
         log_event("Bash", tool_input, "passed", "allow")
-        return
+        return True
 
     def _mark(s: dict) -> dict:
         targets = list(s.get("gated_targets", []))
@@ -172,6 +218,7 @@ def _handle_bash(tool_input: dict[str, Any], cfg: Config) -> None:
         tool_input=tool_input,
         gate_type="fact_force_routine",
     )
+    return False
 
 
 def main() -> None:
@@ -190,11 +237,17 @@ def main() -> None:
         return
 
     if tool_name in ("Edit", "Write"):
-        _handle_edit_or_write(tool_name, tool_input, cfg)
+        allowed = _handle_edit_or_write(tool_name, tool_input, cfg)
+        if allowed and cfg.gates.bughunt_gate:
+            update_state(lambda s: record_edit(s, time.time()))
         return
 
     if tool_name == "Bash":
-        _handle_bash(tool_input, cfg)
+        allowed = _handle_bash(tool_input, cfg)
+        if allowed and cfg.gates.bughunt_gate:
+            command = (tool_input or {}).get("command", "")
+            if is_bughunt_command(command):
+                update_state(lambda s: record_bughunt(s, time.time()))
         return
 
     # Unknown / untracked tool — allow.

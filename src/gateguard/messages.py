@@ -49,6 +49,19 @@ DEFAULT_BASH_ROUTINE = (
     "After quoting, retry the operation."
 )
 
+DEFAULT_BUGHUNT = (
+    "[GateGuard — bughunt gate]\n\n"
+    "Three or more Edit/Write ops have happened without a test, build, or "
+    "benchmark run. Before the next operation:\n\n"
+    "1. Run the relevant tests (pytest / npm test / cargo test / etc.).\n"
+    "2. Verify the build still succeeds (if applicable).\n"
+    "3. Exercise the changed code on real input.\n"
+    "4. Check edge cases (empty, huge, concurrent, tz, size bloat).\n\n"
+    "Present the verification result in the same turn, then retry.\n"
+    "Bug-hunting should be proactive, not user-triggered.\n\n"
+    "Bypass: GATEGUARD_BUGHUNT_DISABLED=1"
+)
+
 
 def _sanitize_path(file_path: str) -> str:
     """Strip newlines and control characters to prevent message injection."""
@@ -71,3 +84,7 @@ def bash_destructive_gate(overrides: dict[str, str] | None = None) -> str:
 
 def bash_routine_gate(overrides: dict[str, str] | None = None) -> str:
     return (overrides or {}).get("bash_routine", DEFAULT_BASH_ROUTINE)
+
+
+def bughunt_gate_msg(overrides: dict[str, str] | None = None) -> str:
+    return (overrides or {}).get("bughunt", DEFAULT_BUGHUNT)
