@@ -1,8 +1,10 @@
 # GateGuard
 
-![PyPI](https://img.shields.io/pypi/v/gateguard-ai) ![Python](https://img.shields.io/pypi/pyversions/gateguard-ai) ![License](https://img.shields.io/pypi/l/gateguard-ai) ![CI](https://github.com/zunoworks/gateguard/actions/workflows/ci.yml/badge.svg)
+![PyPI](https://img.shields.io/pypi/v/gateguard-ai) ![Python](https://img.shields.io/pypi/pyversions/gateguard-ai) ![License](https://img.shields.io/pypi/l/gateguard-ai) ![CI](https://github.com/zunoworks/gateguard/actions/workflows/ci.yml/badge.svg) [![Shipped in ECC](https://img.shields.io/badge/Shipped_in-ECC%20(159K%E2%98%85)-blueviolet)](https://github.com/affaan-m/everything-claude-code/blob/main/skills/gateguard/SKILL.md)
 
 **A fact-forcing hook gate for Claude Code.**
+
+> GateGuard also ships as a skill in [everything-claude-code](https://github.com/affaan-m/everything-claude-code) (159K★). The JS port lives there for ECC users; **this repo is the Python upstream** and tracks the latest gates (v0.4.0 added the post-implementation bughunt gate).
 
 GateGuard makes Claude Code pause and investigate before it edits your files.
 When Claude tries to modify, create, or run something, the gate blocks the first
