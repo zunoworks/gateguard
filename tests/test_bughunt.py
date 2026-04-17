@@ -22,13 +22,17 @@ import pytest
 
 from gateguard import hook
 from gateguard.bughunt import (
+    BUGHUNT_DEBOUNCE_SEC,
     BUGHUNT_GATE_COOLDOWN_SEC,
     bughunt_gate_should_fire,
     is_bughunt_command,
     is_bughunt_disabled,
+    is_debounced_edit,
+    is_trivial_file,
     mark_gate_fired,
     record_bughunt,
     record_edit,
+    update_recent_file_edit,
 )
 from gateguard.state import load_state, update_state
 
@@ -272,3 +276,172 @@ class TestBughuntGateIntegration:
         state = load_state()
         assert state.get("last_bughunt_at", 0.0) > 0.0
         assert state.get("bughunt_count", 0) == 1
+
+
+# --- v0.4.1 noise-reduction tests -------------------------------------------
+
+
+class TestIsTrivialFile:
+    def test_markdown_and_plaintext(self):
+        assert is_trivial_file("README.md")
+        assert is_trivial_file("docs/guide.md")
+        assert is_trivial_file("notes.txt")
+        assert is_trivial_file("docs/intro.rst")
+        assert is_trivial_file("server.log")
+
+    def test_case_insensitive_extension(self):
+        assert is_trivial_file("README.MD")
+        assert is_trivial_file("NOTES.Txt")
+
+    def test_code_files_not_trivial(self):
+        assert not is_trivial_file("src/app.py")
+        assert not is_trivial_file("index.ts")
+        assert not is_trivial_file("main.go")
+        assert not is_trivial_file("Cargo.toml")
+
+    def test_convention_filenames(self):
+        assert is_trivial_file("CHANGELOG")
+        assert is_trivial_file("CHANGELOG.md")
+        assert is_trivial_file("TODO")
+        assert is_trivial_file("path/to/LICENSE")
+        assert is_trivial_file("project/CHANGES")
+
+    def test_empty_and_weird_paths(self):
+        assert not is_trivial_file("")
+        assert not is_trivial_file("src/main.py")
+        # Windows-style paths should still resolve basename correctly.
+        assert is_trivial_file("C:\\repo\\CHANGELOG.md")
+
+
+class TestIsDebouncedEdit:
+    def test_no_state_means_not_debounced(self):
+        assert not is_debounced_edit({}, "/tmp/foo.py", now=1000.0)
+
+    def test_recent_edit_within_window(self):
+        state = {"recent_file_edits": {"/tmp/foo.py": 900.0}}
+        assert is_debounced_edit(
+            state, "/tmp/foo.py", now=1000.0, window_sec=600.0
+        )
+
+    def test_edit_outside_window(self):
+        state = {"recent_file_edits": {"/tmp/foo.py": 100.0}}
+        assert not is_debounced_edit(
+            state, "/tmp/foo.py", now=1000.0, window_sec=600.0
+        )
+
+    def test_different_file_not_debounced(self):
+        state = {"recent_file_edits": {"/tmp/foo.py": 1000.0}}
+        assert not is_debounced_edit(state, "/tmp/bar.py", now=1000.0)
+
+    def test_malformed_timestamp_treated_as_not_debounced(self):
+        """Malformed state should fail open (don't block) rather than crash."""
+        state = {"recent_file_edits": {"/tmp/foo.py": "not-a-number"}}
+        assert not is_debounced_edit(state, "/tmp/foo.py", now=1000.0)
+
+
+class TestUpdateRecentFileEdit:
+    def test_records_new_file(self):
+        state: dict = {}
+        out = update_recent_file_edit(state, "/tmp/a.py", 1000.0)
+        assert out["recent_file_edits"] == {"/tmp/a.py": 1000.0}
+
+    def test_overwrites_existing_file_timestamp(self):
+        state = {"recent_file_edits": {"/tmp/a.py": 500.0}}
+        out = update_recent_file_edit(state, "/tmp/a.py", 1000.0)
+        assert out["recent_file_edits"]["/tmp/a.py"] == 1000.0
+
+    def test_prunes_entries_older_than_2x_window(self):
+        state = {
+            "recent_file_edits": {
+                "/tmp/stale.py": 0.0,   # far in the past
+                "/tmp/fresh.py": 9_000.0,
+            }
+        }
+        out = update_recent_file_edit(
+            state, "/tmp/new.py", 10_000.0, window_sec=600.0
+        )
+        # cutoff = 10_000 - 1200 = 8_800, so stale (0) should be pruned,
+        # fresh (9_000) should survive.
+        recent = out["recent_file_edits"]
+        assert "/tmp/stale.py" not in recent
+        assert recent.get("/tmp/fresh.py") == 9_000.0
+        assert recent.get("/tmp/new.py") == 10_000.0
+
+
+class TestV041HookIntegration:
+    def test_markdown_edit_does_not_increment_edit_count(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        """v0.4.1: .md files are trivial — editing README.md three times
+        should NOT fire the bughunt gate."""
+        _enable_bughunt_config(monkeypatch, tmp_path)
+        update_state(lambda s: {
+            **s,
+            "read_files": ["/tmp/README.md"],
+            "gated_targets": ["/tmp/README.md"],
+            "edit_count": 0,
+            "last_bughunt_at": 9_999_999_999.0,  # silence the gate regardless
+        })
+        for _ in range(3):
+            _invoke(
+                monkeypatch,
+                {
+                    "tool_name": "Edit",
+                    "tool_input": {
+                        "file_path": "/tmp/README.md",
+                        "old_string": "x",
+                    },
+                },
+            )
+        assert load_state().get("edit_count", 0) == 0
+
+    def test_same_file_within_debounce_window_counts_once(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        """Editing the same .py file three times in quick succession should
+        count as 1 edit, not 3 — step-by-step refactors shouldn't trip the
+        gate."""
+        _enable_bughunt_config(monkeypatch, tmp_path)
+        update_state(lambda s: {
+            **s,
+            "read_files": ["/tmp/foo.py"],
+            "gated_targets": ["/tmp/foo.py"],
+            "edit_count": 0,
+            "last_bughunt_at": 9_999_999_999.0,
+        })
+        for _ in range(3):
+            _invoke(
+                monkeypatch,
+                {
+                    "tool_name": "Edit",
+                    "tool_input": {
+                        "file_path": "/tmp/foo.py",
+                        "old_string": "x",
+                    },
+                },
+            )
+        # First edit counts, the next two are debounced → total 1.
+        assert load_state().get("edit_count", 0) == 1
+
+    def test_different_files_each_count(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        """Editing three different .py files should still produce
+        edit_count=3 — the debounce is per-file, not per-session."""
+        _enable_bughunt_config(monkeypatch, tmp_path)
+        update_state(lambda s: {
+            **s,
+            "read_files": ["/tmp/a.py", "/tmp/b.py", "/tmp/c.py"],
+            "gated_targets": ["/tmp/a.py", "/tmp/b.py", "/tmp/c.py"],
+            "edit_count": 0,
+            "last_bughunt_at": 9_999_999_999.0,
+        })
+        for fp in ("/tmp/a.py", "/tmp/b.py", "/tmp/c.py"):
+            _invoke(
+                monkeypatch,
+                {
+                    "tool_name": "Edit",
+                    "tool_input": {"file_path": fp, "old_string": "x"},
+                },
+            )
+        assert load_state().get("edit_count", 0) == 3

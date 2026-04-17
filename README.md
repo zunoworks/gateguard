@@ -110,7 +110,7 @@ Restart Claude Code and the gate is active.
 | **Fact-force Write** | First `Write` per file | Quote the user's instruction, confirm no duplicate exists, detect conflicts (instruction wins), verify data schemas |
 | **Fact-force destructive Bash** | `rm -rf`, `git reset --hard`, `drop table`, etc. | List what will be destroyed, give a rollback, quote the instruction |
 | **Fact-force routine Bash** | First `Bash` per session | Quote the user's current instruction |
-| **Bughunt** (v0.4.0, opt-in) | 3+ Edit/Write ops since the last test/build run | Run tests, verify the build, exercise the change on real input, check edge cases |
+| **Bughunt** (v0.4.0+, opt-in) | 3+ Edit/Write ops to non-docs files since the last test/build run | Run tests, verify the build, exercise the change on real input, check edge cases |
 
 Each gate fires once per target per session. After the facts are presented,
 the next attempt passes through.
@@ -118,6 +118,13 @@ the next attempt passes through.
 The bughunt gate has a 300-second cooldown after firing, so one missed
 reminder does not pin the session. Bypass per-session with
 `GATEGUARD_BUGHUNT_DISABLED=1`.
+
+Since **v0.4.1**, the bughunt gate skips edits to `.md` / `.txt` / `.rst` /
+`.log` / `.gitignore` and conventional filenames (`CHANGELOG`, `TODO`,
+`LICENSE`, ...). Repeated edits to the same file within 10 minutes count as
+a single edit, so step-by-step refactors of one function don't trip the
+gate. These defaults keep the signal-to-noise ratio high without needing
+per-project config.
 
 ## Why "verify data schemas"?
 

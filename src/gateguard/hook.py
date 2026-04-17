@@ -25,9 +25,12 @@ from typing import Any
 from .bughunt import (
     bughunt_gate_should_fire,
     is_bughunt_command,
+    is_debounced_edit,
+    is_trivial_file,
     mark_gate_fired,
     record_bughunt,
     record_edit,
+    update_recent_file_edit,
 )
 from .config import Config, load_config
 from .log import log_event
@@ -239,7 +242,19 @@ def main() -> None:
     if tool_name in ("Edit", "Write"):
         allowed = _handle_edit_or_write(tool_name, tool_input, cfg)
         if allowed and cfg.gates.bughunt_gate:
-            update_state(lambda s: record_edit(s, time.time()))
+            file_path = (tool_input or {}).get("file_path", "")
+            # v0.4.1: docs/plaintext edits never count; re-edits to the same
+            # file within BUGHUNT_DEBOUNCE_SEC don't add to the budget either.
+            if file_path and not is_trivial_file(file_path):
+                now = time.time()
+
+                def _update(s: dict) -> dict:
+                    if not is_debounced_edit(s, file_path, now=now):
+                        record_edit(s, now)
+                    update_recent_file_edit(s, file_path, now)
+                    return s
+
+                update_state(_update)
         return
 
     if tool_name == "Bash":
