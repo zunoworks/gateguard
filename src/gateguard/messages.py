@@ -1,65 +1,78 @@
 """Gate message templates.
 
 Users can override any of these via `.gateguard.yml` → `messages` dict.
-Keys: edit, write, bash_destructive, bash_routine
+Keys: edit, write, bash_destructive, bash_routine, bughunt
+
+Message design (v0.5.0):
+  - First line: what happened and why it paused (user-facing translation)
+  - Second block: "AI, before retrying:" — explicit addressee, plain verbs
+  - Plain words over jargon: "search" not "Grep", "files that use this"
+    not "import/require", "paused" not "denied"
 """
 
 from __future__ import annotations
 
 
 DEFAULT_EDIT = (
-    "[GateGuard — fact-forcing gate]\n\n"
-    "Before editing {file_path}, follow these steps in order:\n\n"
-    "1. Quote the user's current instruction verbatim "
-    "(to confirm the change is in scope).\n"
-    "2. List every file that imports/requires this file (use Grep).\n"
-    "3. If the existing code's patterns conflict with the user's instruction, "
-    "state the conflict explicitly. When in conflict, the user's instruction takes priority.\n"
-    "4. If this file reads/writes data files, check one real record and verify "
-    "field names, structure, and date format match your implementation "
-    "(use redacted or synthetic values, not raw production data).\n\n"
-    "Present the facts, then retry the same operation."
+    "🛡️ GateGuard paused this edit — confirm the impact first.\n\n"
+    "The AI tried to edit {file_path} without first checking what it affects.\n\n"
+    "AI, before retrying:\n"
+    "1. Quote the user's current instruction verbatim (to confirm the change is in scope).\n"
+    "2. Search the codebase for every file that uses this one, and list them.\n"
+    "3. If existing code conflicts with the user's instruction, state the conflict "
+    "explicitly. When in conflict, the user's instruction wins.\n"
+    "4. If this file reads/writes data files, check one real record and confirm "
+    "field names, structure, and date format align (use redacted values).\n\n"
+    "Present the findings, then retry the same operation.\n\n"
+    "Note: parallel edits to the same file within 2 seconds are auto-blocked. "
+    "After presenting facts, retry one at a time."
 )
 
 DEFAULT_WRITE = (
-    "[GateGuard — fact-forcing gate]\n\n"
-    "Before creating {file_path}, follow these steps in order:\n\n"
+    "🛡️ GateGuard paused this new file — confirm it's needed first.\n\n"
+    "The AI tried to create {file_path} without first checking for duplicates.\n\n"
+    "AI, before retrying:\n"
     "1. Quote the user's current instruction verbatim.\n"
-    "2. Use Glob to confirm no existing file already provides this.\n"
-    "3. If the existing code's patterns conflict with the user's instruction, "
-    "state the conflict explicitly. When in conflict, the user's instruction takes priority.\n"
-    "4. If this file will read/write data files, check one real record and verify "
-    "field names, structure, and date format match your implementation "
-    "(use redacted or synthetic values, not raw production data).\n\n"
-    "Present the facts, then retry the same operation."
+    "2. Search the codebase for any existing file that already provides this.\n"
+    "3. If existing code conflicts with the user's instruction, state the conflict "
+    "explicitly. When in conflict, the user's instruction wins.\n"
+    "4. If this file will read/write data files, check one real record and confirm "
+    "field names, structure, and date format align (use redacted values).\n\n"
+    "Present the findings, then retry the same operation.\n\n"
+    "Note: parallel creates of the same file within 2 seconds are auto-blocked. "
+    "After presenting facts, retry one at a time."
 )
 
 DEFAULT_BASH_DESTRUCTIVE = (
-    "[GateGuard — fact-forcing gate]\n\n"
-    "A destructive command was detected. Before running it, present:\n\n"
-    "1. The files or data this command will modify or delete.\n"
-    "2. A one-line rollback procedure.\n"
-    "3. The user's current instruction verbatim.\n\n"
-    "Present the facts, then retry the same operation."
+    "🛡️ GateGuard paused this command — it may be hard to undo.\n\n"
+    "The AI tried to run a destructive command (delete / overwrite / force-push / etc.).\n\n"
+    "AI, before retrying:\n"
+    "1. List the files or data this command will modify or delete.\n"
+    "2. Write a one-line rollback procedure in case you need to undo.\n"
+    "3. Quote the user's current instruction verbatim.\n\n"
+    "Present the findings, then retry the same operation."
 )
 
 DEFAULT_BASH_ROUTINE = (
-    "[GateGuard — fact-forcing gate]\n\n"
-    "Quote the user's current instruction verbatim.\n"
-    "After quoting, retry the operation."
+    "🛡️ GateGuard paused this command — confirm scope first.\n\n"
+    "The AI tried to run a shell command. Confirming alignment with the user's "
+    "current instruction before it executes.\n\n"
+    "AI, before retrying:\n"
+    "Quote the user's current instruction verbatim, then retry the operation."
 )
 
 DEFAULT_BUGHUNT = (
-    "[GateGuard — bughunt gate]\n\n"
-    "Three or more Edit/Write ops have happened without a test, build, or "
-    "benchmark run. Before the next operation:\n\n"
+    "🛡️ GateGuard paused this — tests haven't been run after recent edits.\n\n"
+    "The AI has made 3+ Edit/Write operations with no test, build, or benchmark "
+    "run since. Before the next operation, verify nothing is broken.\n\n"
+    "AI, before retrying:\n"
     "1. Run the relevant tests (pytest / npm test / cargo test / etc.).\n"
     "2. Verify the build still succeeds (if applicable).\n"
     "3. Exercise the changed code on real input.\n"
-    "4. Check edge cases (empty, huge, concurrent, tz, size bloat).\n\n"
+    "4. Check edge cases (empty, huge, concurrent, timezone, size bloat).\n\n"
     "Present the verification result in the same turn, then retry.\n"
     "Bug-hunting should be proactive, not user-triggered.\n\n"
-    "Bypass: GATEGUARD_BUGHUNT_DISABLED=1"
+    "To temporarily disable: set env var GATEGUARD_BUGHUNT_DISABLED=1"
 )
 
 
