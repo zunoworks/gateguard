@@ -55,7 +55,7 @@ DEFAULT_BASH_DESTRUCTIVE = (
 
 DEFAULT_BASH_ROUTINE = (
     "🛡️ GateGuard paused this command — confirm scope first.\n\n"
-    "The AI tried to run a shell command. Confirming alignment with the user's "
+    "The AI tried to run a shell command. Confirm alignment with the user's "
     "current instruction before it executes.\n\n"
     "AI, before retrying:\n"
     "Quote the user's current instruction verbatim, then retry the operation."

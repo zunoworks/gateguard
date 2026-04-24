@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gateguard-ai"
-version = "0.4.1"
+version = "0.5.0"
 description = "A fact-forcing hook gate for Claude Code. Makes the AI pause and investigate before editing."
 readme = "README.md"
 license = { text = "MIT" }

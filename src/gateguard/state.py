@@ -29,7 +29,8 @@ except ImportError:  # pragma: no cover - unavailable on POSIX
     msvcrt = None
 
 
-STATE_DIR = Path(os.environ.get("GATEGUARD_STATE_DIR", "")) or Path.home() / ".gateguard"
+_env_state_dir = os.environ.get("GATEGUARD_STATE_DIR", "").strip()
+STATE_DIR = Path(_env_state_dir) if _env_state_dir else Path.home() / ".gateguard"
 
 _SAFE_CHARS = re.compile(r"[^a-zA-Z0-9_\-]")
 _MAX_ID_LEN = 64

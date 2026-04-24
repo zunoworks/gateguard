@@ -6,6 +6,8 @@
 
 > Also shipped as a skill in [everything-claude-code](https://github.com/affaan-m/everything-claude-code). The JS port lives there; this repo is the Python upstream.
 
+> **Not to be confused** with `gateguard-personal` — an internal hook used at ZUNO WORKS with its own version series (`v4.x`). This repository is the public Python package `gateguard-ai` (`v0.x.y` series).
+
 GateGuard makes Claude Code pause and investigate before it edits your files.
 When Claude tries to modify, create, or run something, the gate blocks the first
 attempt and forces Claude to present concrete facts — who imports this file, what
