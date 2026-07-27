@@ -9,14 +9,18 @@
 > **Not to be confused** with `gateguard-personal` — an internal hook used at ZUNO WORKS with its own version series (`v4.x`). This repository is the public Python package `gateguard-ai` (`v0.x.y` series).
 
 GateGuard makes Claude Code pause and investigate before it edits your files.
-When Claude tries to modify, create, or run something, the gate blocks the first
-attempt and forces Claude to present concrete facts — who imports this file, what
-the data actually looks like, what the user's instruction was — before it is
-allowed to proceed.
+When Claude tries to modify, create, or run something without having looked
+first, the gate blocks the attempt and forces Claude to gather concrete facts —
+who imports this file, what the data actually looks like, what the user's
+instruction was — before it is allowed to proceed.
 
 Self-evaluation ("are you sure?") doesn't change LLM behavior. Forced
-investigation does. GateGuard is the smallest thing that reliably moves that
-needle.
+investigation does. And since **v0.6.0**, investigation is no longer demanded
+and then taken on trust: an evidence ledger observes what Claude actually did
+(`Read` / `Grep` / `Glob` / investigative `Bash`), and the gate opens on
+observed behavior — never on claims. If Claude already did the homework, no
+gate fires at all. If it didn't, the gate fires and the homework it then does
+is recorded, becoming its pass on retry.
 
 ## Evidence: A/B test results
 
@@ -98,8 +102,10 @@ This does three things:
 1. Writes `.gateguard.yml` into the current directory.
 2. Registers a `PreToolUse` hook in `~/.claude/settings.json` that runs
    `gateguard-hook` on every `Edit`, `Write`, and `Bash` call.
-3. Registers a `PostToolUse` hook that tracks which files have been `Read`
-   (needed for the Read-before-Edit gate).
+3. Registers a `PostToolUse` hook on `Read|Grep|Glob|Bash` — the evidence
+   ledger (v0.6.0). It records observed investigation for the recognition
+   audit and tracks Read files for the Read-before-Edit gate. Re-running
+   `gateguard init` upgrades a v0.5.x "Read"-only registration in place.
 
 Restart Claude Code and the gate is active.
 
@@ -229,18 +235,26 @@ _gather facts_ — "list every file that imports this module" — forces it to u
 self-evaluation never did.
 
 Every competitor in the AI guardrails space stops at **deny**. GateGuard does
-**deny + force investigation + demand evidence**. The model can't proceed until
-it has demonstrated understanding.
+**deny + force investigation + verify the investigation happened**. The model
+can't proceed until it has demonstrated understanding — and since v0.6.0 the
+demonstration is checked against observed tool history, not taken on trust.
 
-GateGuard is a Claude Code `PreToolUse` hook that:
+GateGuard is a pair of Claude Code hooks:
 
-1. **Denies** the first attempt at Edit/Write/Bash
-2. **Tells the model exactly which facts to gather** (importers, public API,
-   data schemas, user instruction)
-3. **Allows** the retry after facts are presented
+1. The **observation hook** (`PostToolUse`) records every `Read`, `Grep`,
+   `Glob`, and investigative `Bash` into an evidence ledger. It never denies
+   anything — observation and enforcement are separate hooks by design.
+2. The **gate** (`PreToolUse`) consults the ledger before Edit/Write/Bash.
+   Investigated target → pass, silently. Uninvestigated target → **deny**,
+   with exact instructions on which facts to gather (importers, data
+   schemas, user instruction).
+3. The investigation the model then performs is itself recorded, so the
+   retry passes on evidence — and grants the directory a 30-minute scope
+   pass so verified areas stay quiet.
 
-The second attempt succeeds — but now the model has context it didn't have
-before, producing measurably better code.
+Either way the model ends up with context it didn't have before, producing
+measurably better code — the difference is that ceremony is only paid when
+recognition is actually missing.
 
 ## Spread via CLAUDE.md
 
