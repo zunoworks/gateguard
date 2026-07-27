@@ -24,6 +24,12 @@ is recorded, becoming its pass on retry.
 
 ## Evidence: A/B test results
 
+> **Measured on v0.3.0** — when every first Edit/Write was gated. v0.6.0
+> keeps this exact ceremony for *uninvestigated* targets (the evidence
+> ledger only skips it when the investigation observably already
+> happened), so the mechanism below is still the fallback path — but
+> these numbers have **not** been re-measured on v0.6.0.
+
 Three tasks, scored on a 10-point rubric (code structure, edge cases, pattern
 compliance, test quality, design decisions). GateGuard hooks were physically
 active — not prompt injection. The ungated agent ran without hooks.
@@ -75,7 +81,10 @@ Over a multi-file project, this 2-point gap compounds into significant rework.
 
 ## Recommended models
 
-- **Claude Opus 4.7** — primary target, dogfooded for v0.4.0
+- **Claude Fable 5** — v0.6.0's recognition-audit logic was dogfooded live
+  on Fable 5 during development (via its internal twin implementation,
+  gates firing on the very session that wrote it)
+- **Claude Opus 4.7** — primary target through v0.4.0–v0.5.0
 - **Claude Sonnet 4.6** — expected to work, not benchmarked
 - **Haiku 4.5 / older** — may retry instead of investigate; YMMV
 
