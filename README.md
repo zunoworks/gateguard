@@ -111,7 +111,7 @@ Restart Claude Code and the gate is active.
 | **Fact-force Edit** | First `Edit` per file | Quote the user's instruction, list importers, detect conflicts between existing patterns and instruction (instruction wins), verify data schemas from real records |
 | **Fact-force Write** | First `Write` per file | Quote the user's instruction, confirm no duplicate exists, detect conflicts (instruction wins), verify data schemas |
 | **Fact-force destructive Bash** | `rm -rf`, `git reset --hard`, `drop table`, etc. | List what will be destroyed, give a rollback, quote the instruction |
-| **Fact-force routine Bash** | First `Bash` per session | Quote the user's current instruction |
+| **Fact-force routine Bash** | First `Bash` per session (v0.6.0: read-only commands — `ls`, `cat`, `grep`, `git status`, safe pipes — bypass this gate entirely) | Quote the user's current instruction |
 | **Bughunt** (v0.4.0+, opt-in) | 3+ Edit/Write ops to non-docs files since the last test/build run | Run tests, verify the build, exercise the change on real input, check edge cases |
 
 Each gate fires once per target per session. After the facts are presented,
@@ -184,6 +184,7 @@ gates:
   fact_force_bash_destructive: true
   fact_force_bash_routine: true
   bughunt_gate: false  # v0.4.0 opt-in — deny the 4th Edit/Write if tests haven't run
+  readonly_bash_bypass: true  # v0.6.0 — ls/cat/grep/git status skip the routine gate
 
 audit:                  # v0.6.0 recognition audit (all default true)
   evidence_pass: true   # skip the gate when investigation was observed

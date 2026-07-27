@@ -65,17 +65,29 @@ def test_destructive_bash_is_always_gated(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_routine_bash_gated_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    # v0.6.0: `ls -la` is read-only and bypasses the routine gate, so the
+    # once-per-session flow is exercised with a mutating command instead.
     first = _invoke(
         monkeypatch,
-        {"tool_name": "Bash", "tool_input": {"command": "ls -la"}},
+        {"tool_name": "Bash", "tool_input": {"command": "npm install"}},
     )
     assert first is not None and first["hookSpecificOutput"]["permissionDecision"] == "deny"
 
     second = _invoke(
         monkeypatch,
-        {"tool_name": "Bash", "tool_input": {"command": "ls -la"}},
+        {"tool_name": "Bash", "tool_input": {"command": "npm install"}},
     )
     assert second is None
+
+
+def test_readonly_bash_never_denied(monkeypatch: pytest.MonkeyPatch) -> None:
+    # v0.6.0: read-only commands pass silently even as the session's
+    # very first Bash call.
+    out = _invoke(
+        monkeypatch,
+        {"tool_name": "Bash", "tool_input": {"command": "ls -la"}},
+    )
+    assert out is None
 
 
 def test_first_write_is_fact_forced(monkeypatch: pytest.MonkeyPatch) -> None:

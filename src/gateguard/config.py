@@ -44,6 +44,10 @@ class GateConfig:
     # `pip install --upgrade gateguard-ai` does not change behaviour for
     # existing users. Enable via `.gateguard.yml` → gates.bughunt_gate: true.
     bughunt_gate: bool = False
+    # v0.6.0: read-only commands (ls / cat / grep / git status ...) skip
+    # the routine gate. Default ON — it only removes friction; the
+    # detector answers "not read-only" whenever unsure.
+    readonly_bash_bypass: bool = True
 
 
 @dataclass
@@ -117,6 +121,7 @@ def load_config(start: Path | None = None) -> Config:
             "fact_force_bash_destructive",
             "fact_force_bash_routine",
             "bughunt_gate",
+            "readonly_bash_bypass",
         ):
             if key in gates_raw and isinstance(gates_raw[key], bool):
                 setattr(gc, key, gates_raw[key])
@@ -166,6 +171,9 @@ gates:
   # v0.4.0: Bughunt gate — after 3 Edit/Write without a test/build run,
   # deny the next operation and remind the LLM to verify. Opt-in.
   bughunt_gate: false
+  # v0.6.0: read-only commands (ls / cat / grep / git status ...) skip
+  # the routine gate entirely.
+  readonly_bash_bypass: true
 
 # v0.6.0: Recognition audit — gate decisions from OBSERVED tool history.
 audit:

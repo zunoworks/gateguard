@@ -41,6 +41,7 @@ from .bughunt import (
 )
 from .config import Config, load_config
 from .log import log_event
+from .readonly import is_readonly_bash
 from .messages import (
     bash_destructive_gate,
     bash_routine_gate,
@@ -234,6 +235,14 @@ def _handle_bash(tool_input: dict[str, Any], cfg: Config) -> bool:
     if _is_ignored(command, cfg.ignore_paths):
         log_event("Bash", tool_input, "ignored", "allow")
         return False
+
+    # v0.6.0: read-only commands (ls, cat, grep, git status, ...) observe
+    # without mutating — gating them is pure friction. Destructive
+    # detection is unreachable for them by definition (a command cannot
+    # be both read-only and match the destructive patterns).
+    if cfg.gates.readonly_bash_bypass and is_readonly_bash(command):
+        log_event("Bash", tool_input, "readonly_pass", "allow")
+        return True
 
     # Gate 0 (v0.4.0): Bughunt gate — opt-in.
     # Skip when the command itself is a bughunt run (pytest, npm test, etc.);
