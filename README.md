@@ -29,6 +29,13 @@ is recorded, becoming its pass on retry.
 > ledger only skips it when the investigation observably already
 > happened), so the mechanism below is still the fallback path — but
 > these numbers have **not** been re-measured on v0.6.0.
+>
+> **Current-generation evidence lives in
+> [benchmarks/painbench](benchmarks/painbench/RESULTS.md)** (2026-07-27,
+> subject claude-opus-5): trap tasks built from 2026 field reports.
+> Short version — on the 5 family the gate runs at near-zero friction,
+> and its one measured behavioral delta is enforcing look-before-leap
+> exactly at the destructive edge where 2026's real incidents happened.
 
 Three tasks, scored on a 10-point rubric (code structure, edge cases, pattern
 compliance, test quality, design decisions). GateGuard hooks were physically
