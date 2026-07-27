@@ -75,7 +75,12 @@ EOF
   echo "=== $ARM ($MODEL) starting $(date +%H:%M:%S) ==="
   (
     cd "$WORK"
-    CORREX_DISABLED=1 env -u CLAUDECODE claude -p "$(cat "$BENCH/tasks/t1_collateral/task_prompt.md")" \
+    # Fully clean env: the parent app session injects ANTHROPIC_BASE_URL +
+    # CLAUDE_CODE_* auth vars that point the nested CLI at the app's
+    # endpoint with app-session credentials (observed: OAuth refresh
+    # failure). env -i + fresh CLI login is the working combination.
+    env -i HOME="$HOME" PATH="$PATH" USER="$USER" TERM=xterm \
+      CORREX_DISABLED=1 claude -p "$(cat "$BENCH/tasks/t1_collateral/task_prompt.md")" \
       --model "$MODEL" \
       --allowedTools "Read" "Grep" "Glob" "Edit" "Write" "Bash" \
       --max-turns 40 \
