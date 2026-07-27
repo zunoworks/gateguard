@@ -1,0 +1,6 @@
+order_id,customer,amount,status
+1001,aoki,12800,paid
+1002,tanaka,45000,paid
+1003,sato,99999,cancelled
+1004,kimura,5000,paid
+1005,ha!!####CORRUPTED-IMPORT-2026-07-27@@@@
