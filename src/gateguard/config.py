@@ -47,9 +47,23 @@ class GateConfig:
 
 
 @dataclass
+class AuditConfig:
+    """v0.6.0 recognition audit. Defaults ON: evidence_pass / scope_pass /
+    trivial_pass only ever REDUCE denies (they answer the over-blocking
+    complaints), and high_risk_guard keeps the existing deny-once
+    semantics while strengthening the message on sensitive paths."""
+
+    evidence_pass: bool = True
+    scope_pass: bool = True
+    trivial_pass: bool = True
+    high_risk_guard: bool = True
+
+
+@dataclass
 class Config:
     enabled: bool = True
     gates: GateConfig = field(default_factory=GateConfig)
+    audit: AuditConfig = field(default_factory=AuditConfig)
     destructive_bash_extra: list[str] = field(default_factory=list)
     messages: dict[str, str] = field(default_factory=dict)
     ignore_paths: list[str] = field(default_factory=list)
@@ -107,6 +121,18 @@ def load_config(start: Path | None = None) -> Config:
             if key in gates_raw and isinstance(gates_raw[key], bool):
                 setattr(gc, key, gates_raw[key])
 
+    audit_raw = data.get("audit") or {}
+    if isinstance(audit_raw, dict):
+        ac = cfg.audit
+        for key in (
+            "evidence_pass",
+            "scope_pass",
+            "trivial_pass",
+            "high_risk_guard",
+        ):
+            if key in audit_raw and isinstance(audit_raw[key], bool):
+                setattr(ac, key, audit_raw[key])
+
     extra = data.get("destructive_bash_extra") or []
     if isinstance(extra, list):
         cfg.destructive_bash_extra = [str(x) for x in extra if isinstance(x, (str, int))]
@@ -140,6 +166,20 @@ gates:
   # v0.4.0: Bughunt gate — after 3 Edit/Write without a test/build run,
   # deny the next operation and remind the LLM to verify. Opt-in.
   bughunt_gate: false
+
+# v0.6.0: Recognition audit — gate decisions from OBSERVED tool history.
+audit:
+  # Skip the fact-forcing gate when the ledger shows the target was
+  # actually investigated (Read + a grep/glob/scan of its area) recently.
+  evidence_pass: true
+  # After a gate pass, grant the directory a 30-min pass: Read files in a
+  # recently-verified directory skip the ceremony; new directories re-gate.
+  scope_pass: true
+  # Comment/blank-line-only edits pass without ceremony.
+  trivial_pass: true
+  # auth/payment/migration/.env/CI paths: never exempted by evidence, and
+  # the gate message adds an explicit user-confirmation demand.
+  high_risk_guard: true
 
 # Additional destructive shell patterns (regex, OR-joined with built-ins)
 destructive_bash_extra: []

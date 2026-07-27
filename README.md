@@ -117,6 +117,36 @@ Restart Claude Code and the gate is active.
 Each gate fires once per target per session. After the facts are presented,
 the next attempt passes through.
 
+## Recognition audit (v0.6.0)
+
+The fact-forcing gate demands facts, then trusts the retry — which leaves
+one piece of self-report inside GateGuard itself: it cannot tell whether
+the investigation actually happened. v0.6.0 removes it. The read-tracker
+hook becomes an **evidence ledger** (PostToolUse on `Read|Grep|Glob|Bash`)
+that records observed investigation, and the gate consults the ledger
+before demanding the ceremony:
+
+- **Evidence pass** — if the target file was Read *and* its area was
+  actually searched (a grep/glob/scan mentioning the file or its
+  directory, within 30 min), the fact-forcing gate is skipped. The AI's
+  observed behavior — not its answer — is the passport.
+- **Scope pass** — passing the gate (or an evidence pass) grants the
+  file's directory a 30-minute pass. Read files inside a
+  recently-verified directory skip the ceremony; moving to a new
+  directory re-gates. This ends the "same confirmation over and over in
+  long sessions" failure mode structurally.
+- **Risk tiers** — comment/blank-line-only edits pass with no ceremony
+  (*trivial*). Signature changes (`def`/`class`/`import`/`export`)
+  require *deep* evidence: the dependents must have been searched
+  (*elevated*). Auth / payment / migration / `.env` / CI paths are never
+  exempted by evidence and add an explicit user-confirmation demand
+  (*high*).
+
+With an empty ledger, behavior is exactly v0.5.0 — the audit only ever
+converts "already investigated" denies into passes, plus a stronger gate
+on high-impact paths. All four switches live under `audit:` in
+`.gateguard.yml`.
+
 The bughunt gate has a 300-second cooldown after firing, so one missed
 reminder does not pin the session. Bypass per-session with
 `GATEGUARD_BUGHUNT_DISABLED=1`.
@@ -154,6 +184,12 @@ gates:
   fact_force_bash_destructive: true
   fact_force_bash_routine: true
   bughunt_gate: false  # v0.4.0 opt-in — deny the 4th Edit/Write if tests haven't run
+
+audit:                  # v0.6.0 recognition audit (all default true)
+  evidence_pass: true   # skip the gate when investigation was observed
+  scope_pass: true      # 30-min directory pass after a gate pass
+  trivial_pass: true    # comment-only edits skip the ceremony
+  high_risk_guard: true # auth/payment/migration/.env/CI: never exempted
 
 destructive_bash_extra:
   - "supabase db reset"

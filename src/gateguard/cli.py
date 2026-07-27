@@ -18,6 +18,9 @@ CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 HOOK_COMMAND = "gateguard-hook"
 READ_TRACKER_COMMAND = "gateguard-read-tracker"
 HOOK_TIMEOUT_MS = 3000
+# v0.6.0: the read tracker became the evidence ledger — it observes
+# Grep/Glob/investigative Bash in addition to Read.
+READ_TRACKER_MATCHER = "Read|Grep|Glob|Bash"
 
 
 # ---------- init ----------
@@ -77,16 +80,25 @@ def _register_hook(settings: dict) -> bool:
         })
         modified = True
 
-    # PostToolUse: track Read calls (needed for Gate 1: Read-before-Edit)
+    # PostToolUse: the observation hook (Gate 1 read tracking + the
+    # v0.6.0 evidence ledger).
     post = hooks.setdefault("PostToolUse", [])
-    has_post = any(
-        isinstance(h, dict) and h.get("command", "").strip() == READ_TRACKER_COMMAND
-        for group in post if isinstance(group, dict)
-        for h in (group.get("hooks", []) or [])
-    )
+    has_post = False
+    for group in post:
+        if not isinstance(group, dict):
+            continue
+        for h in (group.get("hooks", []) or []):
+            if isinstance(h, dict) and h.get("command", "").strip() == READ_TRACKER_COMMAND:
+                has_post = True
+                # v0.5.x installs registered matcher "Read" only. Upgrade
+                # in place so the evidence ledger actually receives
+                # Grep/Glob/Bash events after `pip install --upgrade`.
+                if group.get("matcher") != READ_TRACKER_MATCHER:
+                    group["matcher"] = READ_TRACKER_MATCHER
+                    modified = True
     if not has_post:
         post.append({
-            "matcher": "Read",
+            "matcher": READ_TRACKER_MATCHER,
             "hooks": [
                 {
                     "type": "command",

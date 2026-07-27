@@ -1,9 +1,16 @@
-"""PostToolUse(Read) hook — tracks which files have been Read this session.
+"""PostToolUse(Read|Grep|Glob|Bash) hook — the observation side of GateGuard.
 
-Used by Gate 1 (Read-before-Edit): if a file hasn't been Read, the first
-Edit attempt is denied.
+v0.1–v0.5 tracked Read calls for Gate 1 (Read-before-Edit). v0.6.0 widens
+this into the evidence ledger: Grep, Glob, and investigative Bash commands
+are recorded as observed investigation. The PreToolUse gate consults the
+ledger and skips the fact-forcing ceremony when the investigation already
+happened — recognition is judged from behavior, not from self-report.
 
-Stdin: {"tool_name": "Read", "tool_input": {"file_path": "/path/to/file"}, ...}
+This hook never denies anything. Recording and enforcement are kept in
+separate hooks on purpose: the recorder that also polices stops being a
+trustworthy recorder.
+
+Stdin: {"tool_name": "Read|Grep|Glob|Bash", "tool_input": {...}, ...}
 Stdout: nothing (PostToolUse hooks don't affect tool execution).
 """
 
@@ -11,7 +18,9 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 
+from .audit import evidence_entry, record_evidence
 from .state import update_state
 
 
@@ -22,18 +31,27 @@ def main() -> None:
     except (json.JSONDecodeError, ValueError):
         data = {}
 
-    file_path = (data.get("tool_input") or {}).get("file_path", "")
-    if not file_path:
+    tool_name = data.get("tool_name", "")
+    tool_input = data.get("tool_input") or {}
+    now = time.time()
+
+    entry = evidence_entry(tool_name, tool_input, now)
+    file_path = tool_input.get("file_path", "") if tool_name == "Read" else ""
+
+    if entry is None and not file_path:
         return
 
-    def add_read_file(state: dict) -> dict:
-        read_files = list(state.get("read_files", []))
-        if file_path not in read_files:
-            read_files.append(file_path)
-        state["read_files"] = read_files
+    def _record(state: dict) -> dict:
+        if file_path:
+            read_files = list(state.get("read_files", []))
+            if file_path not in read_files:
+                read_files.append(file_path)
+            state["read_files"] = read_files
+        if entry is not None:
+            record_evidence(state, entry, now)
         return state
 
-    update_state(add_read_file)
+    update_state(_record)
 
 
 if __name__ == "__main__":

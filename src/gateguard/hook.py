@@ -22,6 +22,13 @@ import sys
 import time
 from typing import Any
 
+from .audit import (
+    evidence_level,
+    grant_scope_pass,
+    is_trivial_change,
+    risk_tier,
+    valid_scope_pass,
+)
 from .bughunt import (
     bughunt_gate_should_fire,
     is_bughunt_command,
@@ -39,6 +46,8 @@ from .messages import (
     bash_routine_gate,
     bughunt_gate_msg,
     edit_gate_msg,
+    elevated_addendum,
+    high_risk_addendum,
     write_gate_msg,
 )
 from .state import load_state, update_state
@@ -140,8 +149,55 @@ def _handle_edit_or_write(
 
     gated = set(state.get("gated_targets", []))
     if file_path in gated:
+        # The gate already fired for this file; this is the post-ceremony
+        # retry (or a later edit). v0.6.0: the completed ceremony verifies
+        # the surrounding scope — grant the directory pass here.
+        if cfg.audit.scope_pass and not valid_scope_pass(file_path, state, now):
+            update_state(lambda s: grant_scope_pass(s, file_path, now))
         log_event(tool_name, tool_input, "passed", "allow")
         return True
+
+    # v0.6.0 recognition audit — consult observed history before demanding
+    # the ceremony. Order: tier → trivial → evidence → scope pass.
+    tier = risk_tier(tool_name, tool_input, file_path)
+    if tier == "high" and not cfg.audit.high_risk_guard:
+        tier = "normal"
+
+    if tier != "high" and cfg.audit.trivial_pass and is_trivial_change(tool_name, tool_input):
+        # Comment/blank-line-only edit — no ceremony, and deliberately NOT
+        # added to gated_targets: the next substantive edit is still gated.
+        log_event(tool_name, tool_input, "trivial_pass", "allow")
+        return False
+
+    if tier != "high":
+        level = evidence_level(file_path, state, now)
+        if cfg.audit.evidence_pass and level == "deep":
+            # Investigation was observed in the ledger — equivalent to the
+            # ceremony. Approve and grant the directory pass.
+            def _evidence_promote(s: dict) -> dict:
+                targets = list(s.get("gated_targets", []))
+                if file_path not in targets:
+                    targets.append(file_path)
+                s["gated_targets"] = targets
+                return grant_scope_pass(s, file_path, now)
+
+            update_state(_evidence_promote)
+            log_event(tool_name, tool_input, "evidence_pass", "allow")
+            return True
+        if (cfg.audit.scope_pass and tier == "normal" and level == "touched"
+                and valid_scope_pass(file_path, state, now)):
+            # Read file inside a recently-verified directory. elevated
+            # (signature changes) is NOT exempted — dependents cross scopes.
+            def _scope_promote(s: dict) -> dict:
+                targets = list(s.get("gated_targets", []))
+                if file_path not in targets:
+                    targets.append(file_path)
+                s["gated_targets"] = targets
+                return grant_scope_pass(s, file_path, now)
+
+            update_state(_scope_promote)
+            log_event(tool_name, tool_input, "scope_pass", "allow")
+            return True
 
     def _mark(s: dict) -> dict:
         targets = list(s.get("gated_targets", []))
@@ -157,7 +213,15 @@ def _handle_edit_or_write(
     else:
         msg = write_gate_msg(file_path, cfg.messages)
 
-    _deny(msg, tool_name=tool_name, tool_input=tool_input, gate_type="fact_force")
+    gate_type = "fact_force"
+    if tier == "high":
+        # Never exempted by evidence, session state, or scope passes.
+        msg += high_risk_addendum(cfg.messages)
+        gate_type = "fact_force_high"
+    elif tier == "elevated":
+        msg += elevated_addendum(cfg.messages)
+
+    _deny(msg, tool_name=tool_name, tool_input=tool_input, gate_type=gate_type)
     return False
 
 

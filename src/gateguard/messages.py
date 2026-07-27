@@ -76,6 +76,20 @@ DEFAULT_BUGHUNT = (
 )
 
 
+DEFAULT_HIGH_RISK_ADDENDUM = (
+    "\n\n⚠ This touches a high-impact area (auth / payment / migration / "
+    "config / CI).\n"
+    "5. Confirm this change is backed by an explicit user instruction. "
+    "If the instruction is ambiguous, ask the user before proceeding."
+)
+
+DEFAULT_ELEVATED_ADDENDUM = (
+    "\n\nNote: a signature change (def/class/import/export) was detected. "
+    "Actually run the dependent search (grep) — searches you run are "
+    "recorded in the evidence ledger and become your pass on retry."
+)
+
+
 def _sanitize_path(file_path: str) -> str:
     """Strip newlines and control characters to prevent message injection."""
     return file_path.replace("\n", " ").replace("\r", " ").strip()[:500]
@@ -101,3 +115,11 @@ def bash_routine_gate(overrides: dict[str, str] | None = None) -> str:
 
 def bughunt_gate_msg(overrides: dict[str, str] | None = None) -> str:
     return (overrides or {}).get("bughunt", DEFAULT_BUGHUNT)
+
+
+def high_risk_addendum(overrides: dict[str, str] | None = None) -> str:
+    return (overrides or {}).get("high_risk_addendum", DEFAULT_HIGH_RISK_ADDENDUM)
+
+
+def elevated_addendum(overrides: dict[str, str] | None = None) -> str:
+    return (overrides or {}).get("elevated_addendum", DEFAULT_ELEVATED_ADDENDUM)
