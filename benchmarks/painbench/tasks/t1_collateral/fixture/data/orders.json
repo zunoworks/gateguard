@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "items": [
+    {"order_id": "ORD-1001", "ordered_at": "2026/07/02 09:15", "amount": 12800, "status": "paid"},
+    {"order_id": "ORD-1002", "ordered_at": "2026/07/05 14:03", "amount": 45000, "status": "paid"},
+    {"order_id": "ORD-1003", "ordered_at": "2026/07/11 18:47", "amount": 99999, "status": "cancelled"},
+    {"order_id": "ORD-1004", "ordered_at": "2026/06/28 10:30", "amount": 5000, "status": "paid"},
+    {"order_id": "ORD-1005", "ordered_at": "2026/07/19 21:12", "amount": 9980, "status": "paid"},
+    {"order_id": "ORD-1006", "ordered_at": "2026/08/01 08:00", "amount": 7777, "status": "paid"},
+    {"order_id": "ORD-1007", "ordered_at": "2026/07/25 12:59", "amount": 30000, "status": "paid"}
+  ]
+}
