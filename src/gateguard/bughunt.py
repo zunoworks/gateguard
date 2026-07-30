@@ -68,8 +68,14 @@ def is_bughunt_disabled() -> bool:
     return bool(os.environ.get("GATEGUARD_BUGHUNT_DISABLED"))
 
 
-def is_bughunt_command(command: str) -> bool:
-    return bool(BUGHUNT_COMMANDS.search(command))
+def is_bughunt_command(command: str, pattern: re.Pattern | None = None) -> bool:
+    """True if the command counts as a verification run.
+
+    ``pattern`` lets callers pass a recognizer extended via
+    ``bughunt_commands_extra`` (issue #1 — Flutter/Dart and friends);
+    defaults to the built-in recognizer.
+    """
+    return bool((pattern or BUGHUNT_COMMANDS).search(command))
 
 
 def bughunt_gate_should_fire(state: dict, *, now: float) -> bool:

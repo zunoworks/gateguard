@@ -30,6 +30,7 @@ from .audit import (
     valid_scope_pass,
 )
 from .bughunt import (
+    BUGHUNT_COMMANDS,
     bughunt_gate_should_fire,
     is_bughunt_command,
     is_debounced_edit,
@@ -70,6 +71,19 @@ def _compile_destructive(cfg: Config) -> re.Pattern[str]:
     joined = "|".join(re.escape(p) for p in cfg.destructive_bash_extra)
     return re.compile(
         BUILTIN_DESTRUCTIVE_BASH.pattern + "|" + joined,
+        re.IGNORECASE,
+    )
+
+
+def _compile_bughunt(cfg: Config) -> re.Pattern[str] | None:
+    """v0.6.1 (issue #1): extend the test/build recognizer via
+    ``bughunt_commands_extra`` — the Flutter/Dart case. None means
+    "use the built-in recognizer"."""
+    if not cfg.bughunt_commands_extra:
+        return None
+    joined = "|".join(re.escape(p) for p in cfg.bughunt_commands_extra)
+    return re.compile(
+        BUGHUNT_COMMANDS.pattern + "|" + joined,
         re.IGNORECASE,
     )
 
@@ -247,7 +261,7 @@ def _handle_bash(tool_input: dict[str, Any], cfg: Config) -> bool:
     # Gate 0 (v0.4.0): Bughunt gate — opt-in.
     # Skip when the command itself is a bughunt run (pytest, npm test, etc.);
     # denying the clearing command would be circular.
-    if cfg.gates.bughunt_gate and not is_bughunt_command(command):
+    if cfg.gates.bughunt_gate and not is_bughunt_command(command, _compile_bughunt(cfg)):
         state = load_state()
         now = time.time()
         if bughunt_gate_should_fire(state, now=now):
@@ -334,7 +348,7 @@ def main() -> None:
         allowed = _handle_bash(tool_input, cfg)
         if allowed and cfg.gates.bughunt_gate:
             command = (tool_input or {}).get("command", "")
-            if is_bughunt_command(command):
+            if is_bughunt_command(command, _compile_bughunt(cfg)):
                 update_state(lambda s: record_bughunt(s, time.time()))
         return
 

@@ -69,6 +69,10 @@ class Config:
     gates: GateConfig = field(default_factory=GateConfig)
     audit: AuditConfig = field(default_factory=AuditConfig)
     destructive_bash_extra: list[str] = field(default_factory=list)
+    # v0.6.1 (issue #1): extra patterns the bughunt gate recognizes as a
+    # verification run (e.g. "flutter test"). OR-joined with the built-ins,
+    # mirroring destructive_bash_extra.
+    bughunt_commands_extra: list[str] = field(default_factory=list)
     messages: dict[str, str] = field(default_factory=dict)
     ignore_paths: list[str] = field(default_factory=list)
 
@@ -142,6 +146,10 @@ def load_config(start: Path | None = None) -> Config:
     if isinstance(extra, list):
         cfg.destructive_bash_extra = [str(x) for x in extra if isinstance(x, (str, int))]
 
+    bh_extra = data.get("bughunt_commands_extra") or []
+    if isinstance(bh_extra, list):
+        cfg.bughunt_commands_extra = [str(x) for x in bh_extra if isinstance(x, (str, int))]
+
     messages = data.get("messages") or {}
     if isinstance(messages, dict):
         cfg.messages = {str(k): str(v) for k, v in messages.items() if isinstance(v, str)}
@@ -191,6 +199,15 @@ audit:
 
 # Additional destructive shell patterns (regex, OR-joined with built-ins)
 destructive_bash_extra: []
+
+# v0.6.1: extra commands the bughunt gate counts as a verification run
+# (OR-joined with the built-in pytest/npm test/cargo test/... recognizer)
+# e.g. for Flutter/Dart projects:
+#   bughunt_commands_extra:
+#     - "flutter test"
+#     - "dart test"
+#     - "flutter analyze"
+bughunt_commands_extra: []
 
 # Override gate messages. Keys: edit, write, bash_destructive, bash_routine
 messages: {}

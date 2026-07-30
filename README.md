@@ -218,6 +218,11 @@ destructive_bash_extra:
   - "supabase db reset"
   - "prisma migrate reset"
 
+bughunt_commands_extra:   # v0.6.1 — teach the bughunt gate your stack's
+  - "flutter test"        # test/build commands (OR-joined with the
+  - "dart test"           # built-in pytest/npm test/cargo test/...)
+  - "flutter analyze"
+
 messages:
   edit: |
     Before editing {file_path}, present:
