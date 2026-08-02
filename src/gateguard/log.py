@@ -51,6 +51,13 @@ def record_hash(record: dict) -> str:
     return hashlib.sha256(_canonical(body).encode("utf-8")).hexdigest()
 
 
+# Tail-read window for _last_hash. Records are bounded (~15KB worst
+# case with full extras), so 64KB guarantees the window's LAST line is
+# complete — a truncated read here would return GENESIS and fork the
+# chain, making an honest log verify as tampered.
+_TAIL_WINDOW = 65536
+
+
 def _last_hash(path) -> str:
     """The `h` of the log's last line, or GENESIS.
 
@@ -62,10 +69,14 @@ def _last_hash(path) -> str:
         with path.open("rb") as f:
             f.seek(0, os.SEEK_END)
             size = f.tell()
-            f.seek(max(0, size - 8192))
+            f.seek(max(0, size - _TAIL_WINDOW))
             chunk = f.read().decode("utf-8", errors="replace")
     except OSError:
         return GENESIS
+    if size > _TAIL_WINDOW:
+        # The window's first line is almost certainly a tail fragment of
+        # a record — drop it so a fragment never json-parses by luck.
+        chunk = chunk.split("\n", 1)[1] if "\n" in chunk else ""
     lines = [ln for ln in chunk.splitlines() if ln.strip()]
     if not lines:
         return GENESIS

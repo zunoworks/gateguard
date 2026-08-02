@@ -184,6 +184,12 @@ def _record(snap: Snapshot, command: str) -> None:
         pass
 
 
+# Files above this size are not blob-backed-up before a Write — the
+# hook must stay fast, and multi-hundred-MB assets are not the "precious
+# uncommitted source" this insurance exists for.
+WRITE_BACKUP_MAX_BYTES = 10 * 1024 * 1024
+
+
 def backup_file_blob(file_path: str) -> dict | None:
     """Stash a file's current content as a git blob before a Write
     overwrites it (v0.7.0 write insurance).
@@ -196,7 +202,7 @@ def backup_file_blob(file_path: str) -> dict | None:
     enforcement never depends on this)."""
     try:
         path = Path(file_path)
-        if not path.is_file():
+        if not path.is_file() or path.stat().st_size > WRITE_BACKUP_MAX_BYTES:
             return None
         root = _git(["rev-parse", "--show-toplevel"], str(path.parent))
         if not root:
