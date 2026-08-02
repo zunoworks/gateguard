@@ -9,13 +9,17 @@ Gate taxonomy:
       Edit on a file that hasn't been Read this session is denied.
   Gate 2 — fact_force
       First Edit/Write per file is denied with a fact-presentation prompt.
-      Destructive Bash commands are always gated (not once-per-session).
+      Destructive Bash commands are denied per command with measured
+      blast-radius facts; the retry passes only once a verified
+      pre-destruction snapshot exists (v0.7.0 insurance — with
+      insurance.snapshot_pass off, every attempt is denied as in v0.6.x).
       Routine Bash is gated once per session.
 """
 
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import json
 import re
 import sys
@@ -26,9 +30,12 @@ from .audit import (
     evidence_level,
     grant_scope_pass,
     is_trivial_change,
+    matching_evidence,
     risk_tier,
     valid_scope_pass,
 )
+from .blast import analyze_blast, format_blast
+from .snapshot import capture_snapshot, snapshot_contains
 from .bughunt import (
     BUGHUNT_COMMANDS,
     bughunt_gate_should_fire,
@@ -46,10 +53,12 @@ from .readonly import is_readonly_bash
 from .messages import (
     bash_destructive_gate,
     bash_routine_gate,
+    bash_uninsured_gate,
     bughunt_gate_msg,
     edit_gate_msg,
     elevated_addendum,
     high_risk_addendum,
+    insurance_promise,
     write_gate_msg,
 )
 from .state import load_state, update_state
@@ -92,8 +101,15 @@ def _is_ignored(path_or_cmd: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatch(path_or_cmd, pat) for pat in patterns)
 
 
-def _deny(reason: str, *, tool_name: str, tool_input: dict[str, Any], gate_type: str) -> None:
-    log_event(tool_name, tool_input, gate_type, "deny")
+def _deny(
+    reason: str,
+    *,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    gate_type: str,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    log_event(tool_name, tool_input, gate_type, "deny", extra=extra)
     json.dump(
         {
             "hookSpecificOutput": {
@@ -104,6 +120,19 @@ def _deny(reason: str, *, tool_name: str, tool_input: dict[str, Any], gate_type:
         },
         sys.stdout,
     )
+
+
+def _evidence_refs(file_path: str, state: dict, now: float) -> list[dict[str, Any]]:
+    """Compact ledger entries for audit-trail linkage."""
+    refs = []
+    for e in matching_evidence(file_path, state, now, limit=5):
+        refs.append({
+            "kind": str(e.get("kind", ""))[:8],
+            "target": str(e.get("target", ""))[:200],
+            "pattern": str(e.get("pattern", ""))[:120],
+            "ts": e.get("ts", 0),
+        })
+    return refs
 
 
 def _handle_edit_or_write(
@@ -197,7 +226,13 @@ def _handle_edit_or_write(
                 return grant_scope_pass(s, file_path, now)
 
             update_state(_evidence_promote)
-            log_event(tool_name, tool_input, "evidence_pass", "allow")
+            # v0.7.0: record the causal link — WHICH observed
+            # investigation justified this pass. `gateguard audit` shows
+            # it as "justified by: ...".
+            log_event(
+                tool_name, tool_input, "evidence_pass", "allow",
+                extra={"evidence": _evidence_refs(file_path, state, now)},
+            )
             return True
         if (cfg.audit.scope_pass and tier == "normal" and level == "touched"
                 and valid_scope_pass(file_path, state, now)):
@@ -240,6 +275,112 @@ def _handle_edit_or_write(
     return False
 
 
+def _destructive_key(command: str) -> str:
+    normalized = " ".join(command.split())
+    return "__destructive__" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+
+
+def _handle_destructive(command: str, tool_input: dict[str, Any], cfg: Config) -> bool:
+    """v0.7.0 insurance flow: deny once with measured facts, then allow
+    the exact same command ONLY with a verified snapshot in hand.
+
+    Fail-closed by design: every path that cannot produce verified
+    insurance ends in a deny — which is exactly the v0.6.x wall. With
+    insurance.snapshot_pass off, the wall is all there is.
+    """
+    recon = analyze_blast(command) if cfg.insurance.blast_recon else None
+    recon_extra = {"blast": recon.summary()} if recon else None
+
+    key = _destructive_key(command)
+    state = load_state()
+    first_attempt = key not in set(state.get("gated_targets", []))
+
+    if first_attempt or not cfg.insurance.snapshot_pass:
+        if first_attempt:
+            def _mark(s: dict) -> dict:
+                targets = list(s.get("gated_targets", []))
+                if key not in targets:
+                    targets.append(key)
+                s["gated_targets"] = targets
+                return s
+
+            update_state(_mark)
+        msg = bash_destructive_gate(cfg.messages)
+        if recon:
+            msg += "\n" + format_blast(recon)
+        if cfg.insurance.snapshot_pass:
+            msg += insurance_promise(cfg.messages)
+        _deny(
+            msg,
+            tool_name="Bash",
+            tool_input=tool_input,
+            gate_type="fact_force_destructive",
+            extra=recon_extra,
+        )
+        return False
+
+    # Retry of a command that already paid the ceremony — secure insurance.
+    if recon and recon.outside_repo:
+        _deny(
+            bash_uninsured_gate(
+                "targets outside the git worktree cannot be covered by a "
+                "snapshot: " + ", ".join(recon.outside_repo[:5]),
+                cfg.messages,
+            ),
+            tool_name="Bash",
+            tool_input=tool_input,
+            gate_type="destructive_uninsured",
+            extra=recon_extra,
+        )
+        return False
+
+    snap = capture_snapshot(command=command)
+    if snap is None:
+        _deny(
+            bash_uninsured_gate(
+                "snapshot capture failed (not a git repository, or git "
+                "unavailable/timed out)",
+                cfg.messages,
+            ),
+            tool_name="Bash",
+            tool_input=tool_input,
+            gate_type="destructive_uninsured",
+            extra=recon_extra,
+        )
+        return False
+
+    unbacked = recon.unbacked if recon else []
+    verified = snapshot_contains(snap, unbacked)
+    if not verified:
+        _deny(
+            bash_uninsured_gate(
+                "snapshot verification failed — the files at risk could not "
+                "be confirmed inside the snapshot",
+                cfg.messages,
+            ),
+            tool_name="Bash",
+            tool_input=tool_input,
+            gate_type="destructive_uninsured",
+            extra=recon_extra,
+        )
+        return False
+
+    certificate = {
+        "snapshot_id": snap.id,
+        "commit": snap.commit,
+        "ref": snap.ref,
+        "repo_root": snap.repo_root,
+        "verified": True,
+        "covered_unbacked": len(unbacked),
+        "rollback": snap.rollback_command,
+    }
+    extra: dict[str, Any] = {"certificate": certificate}
+    if recon:
+        extra["blast"] = recon.summary()
+    log_event("Bash", tool_input, "destructive_insured", "allow", extra=extra)
+    return True
+
+
 def _handle_bash(tool_input: dict[str, Any], cfg: Config) -> bool:
     """Returns True if the op was allowed AND should count toward bughunt tracking."""
     command = tool_input.get("command", "")
@@ -276,13 +417,7 @@ def _handle_bash(tool_input: dict[str, Any], cfg: Config) -> bool:
 
     destructive_re = _compile_destructive(cfg)
     if cfg.gates.fact_force_bash_destructive and destructive_re.search(command):
-        _deny(
-            bash_destructive_gate(cfg.messages),
-            tool_name="Bash",
-            tool_input=tool_input,
-            gate_type="fact_force_destructive",
-        )
-        return False
+        return _handle_destructive(command, tool_input, cfg)
 
     if not cfg.gates.fact_force_bash_routine:
         log_event("Bash", tool_input, "disabled", "allow")

@@ -21,6 +21,8 @@ import sys
 import time
 
 from .audit import evidence_entry, record_evidence
+from .config import load_config
+from .log import log_event
 from .state import update_state
 
 
@@ -52,6 +54,14 @@ def main() -> None:
         return state
 
     update_state(_record)
+
+    # v0.7.0: mirror observed investigation into the audit trail, so
+    # `gateguard audit` renders the full timeline — what the AI checked,
+    # then what it changed. Only ledger-worthy events are logged (the
+    # same filter as the ledger itself); enforcement still lives
+    # exclusively in the PreToolUse hook.
+    if entry is not None and load_config().insurance.evidence_log:
+        log_event(tool_name, tool_input, "evidence", "observe")
 
 
 if __name__ == "__main__":

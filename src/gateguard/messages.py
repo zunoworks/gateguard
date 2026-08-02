@@ -53,6 +53,23 @@ DEFAULT_BASH_DESTRUCTIVE = (
     "Present the findings, then retry the same operation."
 )
 
+DEFAULT_INSURANCE_PROMISE = (
+    "\n\nInsurance: on retry, GateGuard will capture a git snapshot of the "
+    "worktree, verify it contains the files at risk, and only then let the "
+    "command run. Rollback is one command and will be recorded in the audit "
+    "trail. Do not re-implement the destruction another way (scripts, "
+    "in-code deletion) — that path has no insurance."
+)
+
+DEFAULT_BASH_UNINSURED = (
+    "🛡️ GateGuard kept this command paused — insurance could not be secured.\n\n"
+    "The retry is only allowed with a verified pre-destruction snapshot in "
+    "hand, and that failed: {reason}\n\n"
+    "AI: do not work around this gate. Report the situation to the user and "
+    "let them run the command themselves, or ask them to adjust "
+    ".gateguard.yml (insurance.snapshot_pass) if they accept the risk."
+)
+
 DEFAULT_BASH_ROUTINE = (
     "🛡️ GateGuard paused this command — confirm scope first.\n\n"
     "The AI tried to run a shell command. Confirm alignment with the user's "
@@ -107,6 +124,15 @@ def write_gate_msg(file_path: str, overrides: dict[str, str] | None = None) -> s
 
 def bash_destructive_gate(overrides: dict[str, str] | None = None) -> str:
     return (overrides or {}).get("bash_destructive", DEFAULT_BASH_DESTRUCTIVE)
+
+
+def insurance_promise(overrides: dict[str, str] | None = None) -> str:
+    return (overrides or {}).get("insurance_promise", DEFAULT_INSURANCE_PROMISE)
+
+
+def bash_uninsured_gate(reason: str, overrides: dict[str, str] | None = None) -> str:
+    template = (overrides or {}).get("bash_uninsured", DEFAULT_BASH_UNINSURED)
+    return template.replace("{reason}", _sanitize_path(reason))
 
 
 def bash_routine_gate(overrides: dict[str, str] | None = None) -> str:
