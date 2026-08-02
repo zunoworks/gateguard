@@ -70,26 +70,51 @@ from .state import load_state, update_state
 # `.gateguard.yml` → destructive_bash_extra. The same pattern scans
 # executed script CONTENT (v0.7.0), so each entry closes both the
 # command-line and the write-a-script-then-run-it route at once.
+#
+# Boundary lesson (found by adversarial audit): a single trailing \b
+# after the alternation silently broke every alternative ending in a
+# non-word char next to a non-word char — `dd if=/dev/zero`,
+# `git checkout -- file`, `git clean -fd`, and `rm -fr` (flag order!)
+# all slipped through for six versions. Boundaries now live inside the
+# alternatives that need them, and there is a regression test per class.
 BUILTIN_DESTRUCTIVE_BASH = re.compile(
-    r"\b(rm\s+-rf|git\s+reset\s+--hard|git\s+checkout\s+--|git\s+clean\s+-f"
-    r"|drop\s+table|delete\s+from|truncate|git\s+push\s+--force"
-    r"|dd\s+if="
+    # \b lives INSIDE each alternative (a shared prefix/suffix boundary
+    # is exactly the bug class this pattern was rebuilt to kill — a
+    # group-leading \b cannot precede the `>` redirect alternatives).
+    #
+    # rm with any flag bundle containing r/R (recursive) or f/F (force),
+    # in any order or position. Plain `rm file` stays routine.
+    r"(?:\brm\s+(?:-[a-z]*\s+)*-[a-z]*[rf]"
+    r"|\brm\s+--(?:recursive|force)\b"
+    r"|\bgit\s+reset\s+--hard\b|\bgit\s+checkout\s+--(?:\s|$)|\bgit\s+clean\s+-f"
+    r"|\bdrop\s+table\b|\bdelete\s+from\b|\btruncate\b|\bgit\s+push\s+--force\b"
+    r"|\bdd\s+if="
     # v0.7.0: in-language deletion — `python -c "shutil.rmtree(...)"`
     # and friends were a regex-free bypass of the destructive gate.
-    r"|shutil\s*\.\s*rmtree|rimraf|fs\.rmSync|fs\.rmdirSync"
-    r"|find\s+[^\n;|&]*\s-delete)\b",
+    # rimraf needs an argument: `npm install rimraf` is not destruction.
+    r"|\bshutil\s*\.\s*rmtree|\brimraf\s+[^\s;&|-]|\bfs\.rm(?:dir)?Sync"
+    r"|\bfind\s+[^\n;|&]*\s-delete\b"
+    # Self-protection, shell channel: deleting, truncating (>) or
+    # rewriting (sed -i) the guard's own files must pay the destructive
+    # ceremony — the Edit/Write route is already high-risk gated.
+    r"|\brm\s+[^\n;|&]*\.gateguard|>>?\s*\S*\.gateguard"
+    r"|\bsed\s+-i[^\n;|&]*\.gateguard"
+    r"|\brm\s+[^\n;|&]*\.claude[/\\]settings|>>?\s*\S*\.claude[/\\]settings"
+    r"|\bsed\s+-i[^\n;|&]*\.claude[/\\]settings)",
     re.IGNORECASE,
 )
 
 # Interpreters whose file argument the gate scans before execution.
 # Best-effort: the first non-flag token after the interpreter (so
-# `bash -e run.sh` is missed — noted honestly, not hidden).
+# `bash -e run.sh` is missed — noted honestly, not hidden), plus
+# directly-executed paths (./run.sh, /tmp/run.sh). Binary files are
+# skipped by a NUL sniff, not by extension guessing.
 _SCRIPT_EXEC_RE = re.compile(
-    r"(?:^|[;&|]\s*)(?:source|\.|bash|sh|zsh|ksh|dash|python3?|node|ruby|perl)"
+    r"(?:^|[;&|]\s*)(?:source|\.|bash|sh|zsh|ksh|dash|python[0-9.]*|node|ruby|perl)"
     r"\s+([^\s;&|]+)",
     re.IGNORECASE,
 )
-_DIRECT_SCRIPT_RE = re.compile(r"(?:^|[;&|]\s*)(\.{1,2}/[^\s;&|]+)")
+_DIRECT_SCRIPT_RE = re.compile(r"(?:^|[;&|]\s*)((?:\.{1,2})?/[^\s;&|]+)")
 MAX_SCRIPT_SCAN_BYTES = 262144
 
 
@@ -311,9 +336,14 @@ def _destructive_script(
         try:
             if not path.is_file() or path.stat().st_size > MAX_SCRIPT_SCAN_BYTES:
                 continue
-            content = path.read_text(encoding="utf-8", errors="replace")
+            raw = path.read_bytes()
         except OSError:
             continue
+        if b"\x00" in raw[:1024]:
+            # Compiled binary (directly-executed paths catch /usr/bin/*
+            # too) — scanning machine code for shell patterns is noise.
+            continue
+        content = raw.decode("utf-8", errors="replace")
         if destructive_re.search(content):
             return str(path), content
     return None, None

@@ -63,17 +63,22 @@ class BlastReport:
     note: str = ""
 
     def summary(self) -> dict:
-        """Compact form for log records and deny-message extras."""
+        """Compact form for log records and deny-message extras.
+
+        Bounded on both axes (list length AND per-path length): trail
+        records must stay far below log.py's tail-read window, or an
+        oversized record would fork the hash chain."""
+        clip = lambda paths, n: [str(p)[:300] for p in paths[:n]]  # noqa: E731
         return {
             "kind": self.kind,
-            "targets": self.targets[:10],
+            "targets": clip(self.targets, 10),
             "file_count": self.file_count,
             "total_bytes": self.total_bytes,
-            "unbacked": self.unbacked[:20],
+            "unbacked": clip(self.unbacked, 10),
             "unbacked_count": len(self.unbacked),
-            "outside_repo": self.outside_repo[:10],
+            "outside_repo": clip(self.outside_repo, 10),
             "truncated": self.truncated,
-            "note": self.note,
+            "note": self.note[:300],
         }
 
 
@@ -208,14 +213,16 @@ def _analyze(command: str, workdir: str) -> BlastReport:
     budget = MAX_WALK_ENTRIES
     resolved: list[Path] = []
     for target in raw_targets:
-        matches = glob(target) if any(c in target for c in "*?[") else [target]
+        # Anchor relative targets to the analysis cwd BEFORE globbing —
+        # glob() otherwise expands against the process cwd, which is not
+        # necessarily where the command will run.
+        expanded = target if os.path.isabs(target) else os.path.join(workdir, target)
+        matches = glob(expanded) if any(c in expanded for c in "*?[") else [expanded]
         if not matches:
-            report.targets.append(target + " (no match)")
+            report.targets.append(expanded + " (no match)")
             continue
         for m in matches:
             p = Path(m)
-            if not p.is_absolute():
-                p = Path(workdir) / p
             report.targets.append(str(p))
             if not p.exists() and not p.is_symlink():
                 continue
@@ -249,22 +256,32 @@ def _analyze(command: str, workdir: str) -> BlastReport:
     return report
 
 
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]+")
+
+
+def _shown_path(p: str) -> str:
+    """Filenames land verbatim in the gate message the LLM reads — a
+    path crafted with newlines/control chars could inject instructions
+    into the gate's own voice. Flatten and cap before display."""
+    return _CONTROL_CHARS.sub(" ", str(p))[:200]
+
+
 def format_blast(report: BlastReport) -> str:
     """Human block appended to the destructive deny message."""
     lines = ["", "GateGuard measured the blast radius itself:"]
     if report.kind == "opaque":
-        lines.append(f"- {report.note}")
+        lines.append(f"- {_shown_path(report.note)}")
         return "\n".join(lines)
-    shown = ", ".join(report.targets[:5]) or "(none)"
+    shown = ", ".join(_shown_path(t) for t in report.targets[:5]) or "(none)"
     more = f" (+{len(report.targets) - 5} more)" if len(report.targets) > 5 else ""
     lines.append(f"- Targets: {shown}{more}")
     approx = "≥" if report.truncated else ""
     lines.append(
-        f"- Contents: {approx}{report.file_count} files, "
+        f"- Contents: {approx}{report.file_count} file(s), "
         f"{approx}{_human_bytes(report.total_bytes)}"
     )
     if report.unbacked:
-        head = ", ".join(report.unbacked[:5])
+        head = ", ".join(_shown_path(p) for p in report.unbacked[:5])
         more = f" (+{len(report.unbacked) - 5} more)" if len(report.unbacked) > 5 else ""
         lines.append(
             f"- ⚠ {len(report.unbacked)} file(s) exist ONLY in the working tree "
@@ -273,12 +290,12 @@ def format_blast(report: BlastReport) -> str:
     else:
         lines.append("- No untracked/modified files in the blast radius.")
     if report.outside_repo:
-        head = ", ".join(report.outside_repo[:5])
+        head = ", ".join(_shown_path(p) for p in report.outside_repo[:5])
         lines.append(
             f"- ⚠ Outside the git worktree (a snapshot cannot cover these): {head}"
         )
     if report.note:
-        lines.append(f"- Note: {report.note}")
+        lines.append(f"- Note: {_shown_path(report.note)}")
     lines.append(
         "\nReconcile your fact list with these measurements before retrying."
     )

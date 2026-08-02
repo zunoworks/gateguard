@@ -70,6 +70,29 @@ def test_legacy_records_restart_the_chain() -> None:
     assert report.chained == 2
 
 
+def test_long_record_does_not_fork_the_chain() -> None:
+    """Regression: an oversized record beyond the old 8KB tail window
+    made _last_hash return GENESIS, forking the chain — an honest log
+    then verified as tampered."""
+    from gateguard.log import GENESIS, record_hash
+
+    big = {
+        "ts": 1.0, "session": "s", "cwd": "/", "tool": "Bash",
+        "gate": "fact_force_destructive", "action": "deny",
+        "summary": "x" * 30000, "prev": GENESIS,
+    }
+    big["h"] = record_hash(big)
+    log_mod.GATE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    log_mod.GATE_LOG_PATH.write_text(
+        json.dumps(big, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+    _append_events(1)
+    report = verify_chain()
+    assert report.ok
+    assert report.chained == 2
+
+
 def test_empty_log_verifies() -> None:
     report = verify_chain()
     assert report.ok

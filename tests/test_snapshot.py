@@ -92,6 +92,18 @@ def test_snapshot_contains_verifies_paths(repo: Path) -> None:
     assert snapshot_contains(snap, [])
 
 
+def test_write_backup_skips_oversized_files(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gateguard import snapshot as snap_mod
+    from gateguard.snapshot import backup_file_blob
+
+    target = repo / "tracked.txt"
+    assert backup_file_blob(str(target)) is not None
+    monkeypatch.setattr(snap_mod, "WRITE_BACKUP_MAX_BYTES", 4)
+    assert backup_file_blob(str(target)) is None
+
+
 def test_snapshots_are_recorded_for_listing(repo: Path) -> None:
     snap = capture_snapshot(str(repo), command="rm -rf build")
     assert snap is not None

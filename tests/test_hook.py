@@ -101,7 +101,7 @@ def test_destructive_first_deny_includes_blast_and_promise(
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
     # The gate measured the blast radius itself and promises insurance.
     assert "measured the blast radius" in reason
-    assert "1 files" in reason
+    assert "1 file(s)" in reason
     assert "ONLY in the working tree" in reason
     assert "Insurance:" in reason
 
@@ -204,6 +204,55 @@ def test_script_bypass_is_scanned_and_gated(
     # Retry follows the same insured path as command-line destruction.
     second = _invoke(monkeypatch, payload)
     assert second is None
+
+
+@pytest.mark.parametrize("command", [
+    # Regression fleet for the trailing-\b class of pattern bugs: every
+    # one of these slipped through the v0.1–v0.7.0 pattern.
+    "rm -fr build",
+    "rm -r build",
+    "rm -f precious.txt",
+    "rm -v -rf build",
+    "dd if=/dev/zero of=/dev/sda",
+    "git checkout -- file.txt",
+    "git clean -fd",
+    # Shell-channel self-protection.
+    "rm .gateguard.yml",
+    "echo 'enabled: false' > .gateguard.yml",
+    "sed -i 's/true/false/' .gateguard.yml",
+    "echo '{}' > ~/.claude/settings.json",
+])
+def test_destructive_pattern_regressions(command: str) -> None:
+    from gateguard.hook import BUILTIN_DESTRUCTIVE_BASH
+
+    assert BUILTIN_DESTRUCTIVE_BASH.search(command), command
+
+
+@pytest.mark.parametrize("command", [
+    "npm install rimraf",     # installing the package is not destruction
+    "rm --help",
+    "rm todo.txt",            # plain single-file rm stays routine
+    "echo done > output.log",  # redirects to ordinary files stay routine
+    "git checkout --force-help-text",
+    "the file was truncated",
+])
+def test_non_destructive_commands_stay_clean(command: str) -> None:
+    from gateguard.hook import BUILTIN_DESTRUCTIVE_BASH
+
+    assert not BUILTIN_DESTRUCTIVE_BASH.search(command), command
+
+
+def test_binary_executable_is_not_script_scanned(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Directly-executed binaries (NUL bytes) are skipped by the script
+    scanner instead of being pattern-matched as garbage text."""
+    from gateguard.hook import BUILTIN_DESTRUCTIVE_BASH, _destructive_script
+
+    binary = tmp_path / "tool"
+    binary.write_bytes(b"\x7fELF\x00\x00rm -rf /")
+    path, _ = _destructive_script(f"{binary}", BUILTIN_DESTRUCTIVE_BASH)
+    assert path is None
 
 
 def test_inline_language_deletion_is_destructive(
