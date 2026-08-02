@@ -65,7 +65,12 @@ HIGH_RISK_PATH_TOKENS = frozenset({
     "migration", "migrations",
 })
 HIGH_RISK_FILENAME_RE = re.compile(
-    r"^\.env(\..+)?$|^settings(\.local)?\.json$|\.plist$", re.IGNORECASE
+    r"^\.env(\..+)?$|^settings(\.local)?\.json$|\.plist$"
+    # v0.7.0 self-protection: the guardrail's own config must never be
+    # editable on evidence alone — otherwise "disable the gate" is one
+    # ordinary gated edit away.
+    r"|^\.gateguard\.ya?ml$",
+    re.IGNORECASE,
 )
 HIGH_RISK_PATH_RE = re.compile(r"\.github/workflows/", re.IGNORECASE)
 

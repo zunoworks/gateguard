@@ -31,6 +31,8 @@ class ChainReport:
     legacy: int = 0
     first_break_line: int = 0  # 1-based; 0 = no break
     reason: str = ""
+    head: str = ""  # h of the last chained record
+    hashes: list[str] = field(default_factory=list)  # chained h's, in order
 
     def describe(self) -> str:
         if self.total == 0:
@@ -92,8 +94,66 @@ def verify_chain(path: Path | None = None) -> ChainReport:
                 reason="content hash mismatch (record edited)",
             )
         report.chained += 1
+        report.hashes.append(h)
+        report.head = h
         expected_prev = h
     return report
+
+
+# ---------- anchors ----------
+
+def verify_anchors(chain: ChainReport, cwd: str | None = None) -> tuple[int, list[str]]:
+    """Check external anchors against the chain: (verified, problems).
+
+    An anchor pins "after N records the chain head was H" outside the
+    log file — as a git object under refs/gateguard/anchors/ (created by
+    `gateguard anchor`, pushable to a remote). The hash chain alone
+    detects line edits but not a wholesale rewrite (no secret is
+    involved); an anchor the rewriter cannot reach turns full
+    regeneration into a detectable mismatch. No repo or no anchors →
+    (0, []): absence of anchors is not an error, just weaker custody.
+    """
+    import os
+
+    from .snapshot import _git
+
+    workdir = cwd or os.getcwd()
+    root = _git(["rev-parse", "--show-toplevel"], workdir)
+    if not root:
+        return 0, []
+    listing = _git(
+        ["for-each-ref", "--format=%(refname) %(objectname)", "refs/gateguard/anchors/"],
+        root,
+    )
+    if not listing:
+        return 0, []
+
+    verified = 0
+    problems: list[str] = []
+    for line in listing.splitlines():
+        try:
+            ref, obj = line.split()
+        except ValueError:
+            continue
+        blob = _git(["cat-file", "blob", obj], root)
+        if blob is None:
+            problems.append(f"{ref}: unreadable anchor object")
+            continue
+        try:
+            payload = json.loads(blob)
+            head = str(payload["head"])
+            count = int(payload["records"])
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            problems.append(f"{ref}: malformed anchor payload")
+            continue
+        if count <= len(chain.hashes) and count > 0 and chain.hashes[count - 1] == head:
+            verified += 1
+        else:
+            problems.append(
+                f"{ref}: log does not contain anchored head {head[:12]}… at "
+                f"position {count} — the trail was rewritten or truncated"
+            )
+    return verified, problems
 
 
 # ---------- report ----------
