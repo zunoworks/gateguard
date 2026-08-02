@@ -81,6 +81,10 @@ class InsuranceConfig:
     # into the audit trail so `gateguard audit` shows what the AI
     # checked before each mutation.
     evidence_log: bool = True
+    # Before an allowed Write overwrites an existing file, stash the old
+    # content as a git blob (recorded in the trail with its restore
+    # command). Best-effort; never blocks the Write.
+    write_backup: bool = True
 
 
 @dataclass
@@ -166,7 +170,7 @@ def load_config(start: Path | None = None) -> Config:
     insurance_raw = data.get("insurance") or {}
     if isinstance(insurance_raw, dict):
         ic = cfg.insurance
-        for key in ("snapshot_pass", "blast_recon", "evidence_log"):
+        for key in ("snapshot_pass", "blast_recon", "evidence_log", "write_backup"):
             if key in insurance_raw and isinstance(insurance_raw[key], bool):
                 setattr(ic, key, insurance_raw[key])
 
@@ -238,6 +242,9 @@ insurance:
   # Record observed investigation into the audit trail so
   # `gateguard audit` shows what the AI checked before each mutation.
   evidence_log: true
+  # Before an allowed Write overwrites an existing file, stash the old
+  # content as a git blob; the restore command is recorded in the trail.
+  write_backup: true
 
 # Additional destructive shell patterns (regex, OR-joined with built-ins)
 destructive_bash_extra: []

@@ -21,9 +21,11 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+import os
 import re
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 from .audit import (
@@ -35,7 +37,7 @@ from .audit import (
     valid_scope_pass,
 )
 from .blast import analyze_blast, format_blast
-from .snapshot import capture_snapshot, snapshot_contains
+from .snapshot import backup_file_blob, capture_snapshot, snapshot_contains
 from .bughunt import (
     BUGHUNT_COMMANDS,
     bughunt_gate_should_fire,
@@ -65,13 +67,30 @@ from .state import load_state, update_state
 
 
 # Built-in destructive command pattern. Users can extend via
-# `.gateguard.yml` → destructive_bash_extra.
+# `.gateguard.yml` → destructive_bash_extra. The same pattern scans
+# executed script CONTENT (v0.7.0), so each entry closes both the
+# command-line and the write-a-script-then-run-it route at once.
 BUILTIN_DESTRUCTIVE_BASH = re.compile(
     r"\b(rm\s+-rf|git\s+reset\s+--hard|git\s+checkout\s+--|git\s+clean\s+-f"
     r"|drop\s+table|delete\s+from|truncate|git\s+push\s+--force"
-    r"|dd\s+if=)\b",
+    r"|dd\s+if="
+    # v0.7.0: in-language deletion — `python -c "shutil.rmtree(...)"`
+    # and friends were a regex-free bypass of the destructive gate.
+    r"|shutil\s*\.\s*rmtree|rimraf|fs\.rmSync|fs\.rmdirSync"
+    r"|find\s+[^\n;|&]*\s-delete)\b",
     re.IGNORECASE,
 )
+
+# Interpreters whose file argument the gate scans before execution.
+# Best-effort: the first non-flag token after the interpreter (so
+# `bash -e run.sh` is missed — noted honestly, not hidden).
+_SCRIPT_EXEC_RE = re.compile(
+    r"(?:^|[;&|]\s*)(?:source|\.|bash|sh|zsh|ksh|dash|python3?|node|ruby|perl)"
+    r"\s+([^\s;&|]+)",
+    re.IGNORECASE,
+)
+_DIRECT_SCRIPT_RE = re.compile(r"(?:^|[;&|]\s*)(\.{1,2}/[^\s;&|]+)")
+MAX_SCRIPT_SCAN_BYTES = 262144
 
 
 def _compile_destructive(cfg: Config) -> re.Pattern[str]:
@@ -275,21 +294,62 @@ def _handle_edit_or_write(
     return False
 
 
+def _destructive_script(
+    command: str, destructive_re: re.Pattern[str]
+) -> tuple[str, str] | tuple[None, None]:
+    """(path, content) of the first executed script whose content is
+    destructive — the write-a-script-then-run-it bypass, closed by
+    scanning what is about to run instead of trusting the command line.
+    """
+    candidates = [m.group(1) for m in _SCRIPT_EXEC_RE.finditer(command)]
+    candidates += [m.group(1) for m in _DIRECT_SCRIPT_RE.finditer(command)]
+
+    for cand in candidates:
+        if cand.startswith("-"):
+            continue
+        path = Path(os.path.expanduser(cand))
+        try:
+            if not path.is_file() or path.stat().st_size > MAX_SCRIPT_SCAN_BYTES:
+                continue
+            content = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if destructive_re.search(content):
+            return str(path), content
+    return None, None
+
+
 def _destructive_key(command: str) -> str:
     normalized = " ".join(command.split())
     return "__destructive__" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
 
 
-def _handle_destructive(command: str, tool_input: dict[str, Any], cfg: Config) -> bool:
+def _handle_destructive(
+    command: str,
+    tool_input: dict[str, Any],
+    cfg: Config,
+    script_path: str | None = None,
+    script_content: str | None = None,
+) -> bool:
     """v0.7.0 insurance flow: deny once with measured facts, then allow
     the exact same command ONLY with a verified snapshot in hand.
 
     Fail-closed by design: every path that cannot produce verified
     insurance ends in a deny — which is exactly the v0.6.x wall. With
     insurance.snapshot_pass off, the wall is all there is.
+
+    When the destruction lives in an executed script's CONTENT rather
+    than the command line, recon runs over the script text and the deny
+    names the script.
     """
-    recon = analyze_blast(command) if cfg.insurance.blast_recon else None
-    recon_extra = {"blast": recon.summary()} if recon else None
+    recon_source = script_content if script_content else command
+    recon = analyze_blast(recon_source) if cfg.insurance.blast_recon else None
+    recon_extra: dict[str, Any] | None = None
+    if recon:
+        recon_extra = {"blast": recon.summary()}
+    if script_path:
+        recon_extra = recon_extra or {}
+        recon_extra["script"] = script_path
 
     key = _destructive_key(command)
     state = load_state()
@@ -306,6 +366,12 @@ def _handle_destructive(command: str, tool_input: dict[str, Any], cfg: Config) -
 
             update_state(_mark)
         msg = bash_destructive_gate(cfg.messages)
+        if script_path:
+            msg += (
+                f"\n\nNote: the destructive operation is inside {script_path} — "
+                "GateGuard scanned the script's content, not just the command "
+                "line. Running destruction via a script does not skip the gate."
+            )
         if recon:
             msg += "\n" + format_blast(recon)
         if cfg.insurance.snapshot_pass:
@@ -416,8 +482,18 @@ def _handle_bash(tool_input: dict[str, Any], cfg: Config) -> bool:
             return False
 
     destructive_re = _compile_destructive(cfg)
-    if cfg.gates.fact_force_bash_destructive and destructive_re.search(command):
-        return _handle_destructive(command, tool_input, cfg)
+    if cfg.gates.fact_force_bash_destructive:
+        if destructive_re.search(command):
+            return _handle_destructive(command, tool_input, cfg)
+        # The command line looks clean — scan what it EXECUTES. This
+        # closes the classic bypass: write the rm into a script, run
+        # the script.
+        script_path, script_content = _destructive_script(command, destructive_re)
+        if script_path is not None:
+            return _handle_destructive(
+                command, tool_input, cfg,
+                script_path=script_path, script_content=script_content,
+            )
 
     if not cfg.gates.fact_force_bash_routine:
         log_event("Bash", tool_input, "disabled", "allow")
@@ -463,6 +539,17 @@ def main() -> None:
 
     if tool_name in ("Edit", "Write"):
         allowed = _handle_edit_or_write(tool_name, tool_input, cfg)
+        if allowed and tool_name == "Write" and cfg.insurance.write_backup:
+            # This Write is about to replace the file's entire content;
+            # if the old content is uncommitted it exists nowhere else.
+            # Stash it as a git blob and record the restore command.
+            fp = (tool_input or {}).get("file_path", "")
+            backup = backup_file_blob(fp) if fp else None
+            if backup:
+                log_event(
+                    "Write", tool_input, "write_backup", "observe",
+                    extra={"backup": backup},
+                )
         if allowed and cfg.gates.bughunt_gate:
             file_path = (tool_input or {}).get("file_path", "")
             # v0.4.1: docs/plaintext edits never count; re-edits to the same

@@ -238,12 +238,45 @@ Session a1b2c3 — /home/you/project
 ticket or compliance review; `--verify` exits non-zero on a broken
 chain, so CI can require an intact trail.
 
+**4. The bypass routes are closed, not wished away.** A deny-only wall
+teaches the model to route around it. v0.7.0 closes the known routes:
+
+- *Script smuggling*: when the command executes a file (`bash
+  cleanup.sh`, `python x.py`, `./run.sh`), GateGuard scans the
+  script's **content** with the same destructive patterns before it
+  runs. Writing the `rm` into a script changes nothing.
+- *In-language deletion*: `shutil.rmtree`, `rimraf`, `fs.rmSync`,
+  `find … -delete` are destructive patterns now — `python -c` one-liners
+  included.
+- *Turning the gate off*: `.gateguard.yml` is a high-risk path to the
+  gate itself. Editing it is never exempted by evidence and always
+  demands an explicit user instruction (as `settings.json` already did).
+
+**5. External anchors — because a hash chain alone is not custody.**
+The chain detects edited or deleted lines, but a rewriter could
+regenerate the whole log (hashing involves no secret). `gateguard
+anchor` pins `{chain head, record count}` as a git object under
+`refs/gateguard/anchors/` — `--push origin` puts it beyond the
+rewriter's reach — and `gateguard audit --verify` cross-checks every
+anchor, so a wholesale rewrite turns into a reported mismatch. Every
+insured snapshot also embeds the chain head in its commit message as a
+passive anchor.
+
+**6. Write overwrites are insured too.** A `Write` replaces a file's
+entire content; uncommitted old content would survive nowhere. Before
+an allowed overwrite, GateGuard stashes the old content as a git blob
+(`git hash-object -w` — deduplicated, invisible, no index/HEAD impact)
+and records the one-line restore in the trail.
+
 Honest scoping: the snapshot covers the current git worktree only.
 Targets outside the repo (or non-git directories) are uninsurable — the
 gate says so and keeps denying instead of pretending. Database drops,
 `dd`, and force-pushes get no filesystem recon; the report marks them
-opaque. Upgrading pre-v0.7.0 installs: re-run `gateguard init` once to
-widen the PreToolUse hook timeout for snapshot capture.
+opaque. Script scanning reads the first non-flag argument (`bash -e
+run.sh` is missed), and local anchors can be deleted by anyone with
+repo access — push them to a remote for real custody. Upgrading
+pre-v0.7.0 installs: re-run `gateguard init` once to widen the
+PreToolUse hook timeout for snapshot capture.
 
 Since **v0.4.1**, the bughunt gate skips edits to `.md` / `.txt` / `.rst` /
 `.log` / `.gitignore` and conventional filenames (`CHANGELOG`, `TODO`,
@@ -290,6 +323,7 @@ insurance:               # v0.7.0 destructive insurance + flight recorder
   snapshot_pass: true    # deny once, then allow only with a VERIFIED snapshot
   blast_recon: true      # measure the blast radius; numbers go in the deny
   evidence_log: true     # mirror observed investigation into the audit trail
+  write_backup: true     # stash old content as a git blob before overwrites
 
 destructive_bash_extra:
   - "supabase db reset"
@@ -317,7 +351,10 @@ ignore_paths:
 gateguard init [path] [--force] [--skip-hook]
 gateguard logs [--tail N]
 gateguard audit [--verify] [--session ID] [--tail N] [--format text|md|jsonl]
-gateguard snapshots [--tail N]
+gateguard anchor [--push REMOTE]
+gateguard snapshots [--tail N] [--prune --keep-days N]
+gateguard diff <snapshot-id>
+gateguard stats
 gateguard reset
 gateguard --version
 ```
@@ -325,9 +362,21 @@ gateguard --version
 - `init` — write `.gateguard.yml` and register both hooks
 - `logs` — print recent gate events from `~/.gateguard/gate_log.jsonl`
 - `audit` — flight-recorder report (investigation → decisions → insured
-  destructions) with hash-chain verification; `--verify` exits 1 on tampering
-- `snapshots` — list pre-destruction snapshots with their rollback commands
+  destructions) with hash-chain + anchor verification; `--verify` exits 1
+  on tampering
+- `anchor` — pin the chain head into `refs/gateguard/anchors/` (push with
+  `--push origin` for custody a log rewriter can't reach)
+- `snapshots` — list pre-destruction snapshots with their rollback
+  commands; `--prune` drops refs older than the retention window
+- `diff` — worktree vs. snapshot (look before you restore; untracked
+  files show as changes, not deletions)
+- `stats` — near-miss metrics: denies forced, insured destructions, files
+  that existed only in the working tree, Write backups taken
 - `reset` — clear the current session's state file (`~/.gateguard/.session_state_{id}.json`)
+
+The GitHub Action (`action.yml`) accepts an optional `trail-dir` input:
+point it at an exported trail directory and CI fails on a broken chain
+or anchor mismatch.
 
 ## How it works
 

@@ -117,9 +117,13 @@ def _porcelain_paths(cwd: str, targets: list[str] | None = None) -> list[str] | 
 
 
 def _rm_targets(command: str) -> list[str]:
-    """Paths named by rm segments of a (possibly compound) command."""
+    """Paths named by rm segments of a (possibly compound) command.
+
+    Newlines split segments too, so the same parser works on executed
+    script CONTENT (v0.7.0 script recon), not just one-line commands.
+    """
     targets: list[str] = []
-    for segment in re.split(r"&&|\|\||;|\|", command):
+    for segment in re.split(r"&&|\|\||;|\||\n", command):
         if not _RM_SEGMENT.match(segment):
             continue
         try:

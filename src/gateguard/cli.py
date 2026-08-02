@@ -14,7 +14,7 @@ from . import log as log_mod
 from .config import CONFIG_FILENAME, default_config_yaml
 from .snapshot import list_snapshots
 from .state import _state_file, clear_state
-from .trail import load_trail, render_report, verify_chain
+from .trail import load_trail, render_report, verify_anchors, verify_chain
 
 
 CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
@@ -180,18 +180,125 @@ def cmd_logs(args: argparse.Namespace) -> int:
 def cmd_audit(args: argparse.Namespace) -> int:
     """Flight-recorder report + tamper-evidence verification."""
     chain = verify_chain()
+    anchors_ok, anchor_problems = verify_anchors(chain)
+    failed = (not chain.ok) or bool(anchor_problems)
+
     if args.verify:
         print(chain.describe())
-        return 0 if chain.ok else 1
+        if anchors_ok or anchor_problems:
+            print(f"anchors: {anchors_ok} verified, {len(anchor_problems)} mismatched")
+        for problem in anchor_problems:
+            print(f"  ✗ {problem}")
+        return 1 if failed else 0
 
     records = load_trail(session=args.session, tail=args.tail)
     print(render_report(records, chain, fmt=args.format))
-    return 0 if chain.ok else 1
+    for problem in anchor_problems:
+        print(f"ANCHOR MISMATCH: {problem}")
+    return 1 if failed else 0
+
+
+# ---------- anchor ----------
+
+def cmd_anchor(args: argparse.Namespace) -> int:
+    """Pin the current chain head outside the log file.
+
+    The hash chain detects edited/deleted lines but not a wholesale
+    rewrite (hashing involves no secret). An anchor stores {head,
+    record count} as a git object under refs/gateguard/anchors/ in the
+    CURRENT repo; --push sends the anchors to a remote the rewriter
+    cannot reach. The printed line also lands in the session transcript
+    — a copy that lives with the user, not with the log.
+    """
+    import subprocess
+
+    from .snapshot import GIT_TIMEOUT_SEC
+
+    chain = verify_chain()
+    if not chain.ok:
+        print(f"Refusing to anchor a broken chain: {chain.describe()}")
+        return 1
+    if chain.chained == 0:
+        print("Nothing to anchor: no chained records yet.")
+        return 1
+
+    payload = json.dumps(
+        {"ts": time.time(), "head": chain.head, "records": chain.chained}
+    )
+    try:
+        blob = subprocess.run(
+            ["git", "hash-object", "-w", "--stdin"],
+            input=payload, capture_output=True, text=True,
+            timeout=GIT_TIMEOUT_SEC, check=True,
+        ).stdout.strip()
+        ref = (
+            "refs/gateguard/anchors/"
+            + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+            + "-" + chain.head[:8]
+        )
+        subprocess.run(
+            ["git", "update-ref", ref, blob],
+            capture_output=True, text=True, timeout=GIT_TIMEOUT_SEC, check=True,
+        )
+    except (OSError, subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
+        print(f"Anchor failed (not a git repo?): {exc}")
+        return 1
+
+    print(f"ANCHOR {chain.head} @ {chain.chained} records -> {ref}")
+    if args.push:
+        try:
+            subprocess.run(
+                ["git", "push", args.push,
+                 "refs/gateguard/anchors/*:refs/gateguard/anchors/*"],
+                capture_output=True, text=True, timeout=60, check=True,
+            )
+            print(f"Pushed anchors to {args.push}.")
+        except (OSError, subprocess.TimeoutExpired, subprocess.CalledProcessError) as exc:
+            print(f"Anchor stored locally but push failed: {exc}")
+            return 1
+    return 0
 
 
 # ---------- snapshots ----------
 
+def _prune_snapshots(keep_days: int) -> int:
+    """Drop snapshot refs + records older than keep_days. Refs whose
+    repo is gone are dropped from the listing silently."""
+    import subprocess
+
+    from . import state as state_mod
+    from .snapshot import GIT_TIMEOUT_SEC
+
+    cutoff = time.time() - keep_days * 86400
+    records = list_snapshots()
+    kept, pruned = [], 0
+    for rec in records:
+        if float(rec.get("ts", 0) or 0) >= cutoff:
+            kept.append(rec)
+            continue
+        pruned += 1
+        ref, root = rec.get("ref", ""), rec.get("repo_root", "")
+        if ref and root:
+            try:
+                subprocess.run(
+                    ["git", "-C", root, "update-ref", "-d", ref],
+                    capture_output=True, timeout=GIT_TIMEOUT_SEC,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+    path = state_mod.STATE_DIR / "snapshots.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in kept),
+        encoding="utf-8",
+    )
+    print(f"Pruned {pruned} snapshot(s) older than {keep_days} day(s); kept {len(kept)}.")
+    return 0
+
+
 def cmd_snapshots(args: argparse.Namespace) -> int:
+    if args.prune:
+        return _prune_snapshots(args.keep_days)
     records = list_snapshots(tail=args.tail)
     if not records:
         print("No snapshots recorded.")
@@ -203,6 +310,90 @@ def cmd_snapshots(args: argparse.Namespace) -> int:
         print(f"    repo:     {rec.get('repo_root', '?')}")
         print(f"    command:  {rec.get('command', '?')}")
         print(f"    rollback: {rec.get('rollback', '?')}")
+    return 0
+
+
+# ---------- diff ----------
+
+def cmd_diff(args: argparse.Namespace) -> int:
+    """Show what changed since a snapshot — the look-before-you-restore."""
+    import subprocess
+
+    from .snapshot import worktree_tree
+
+    matches = [r for r in list_snapshots() if r.get("id") == args.id]
+    if not matches:
+        print(f"No snapshot with id {args.id}. See `gateguard snapshots`.")
+        return 1
+    rec = matches[-1]
+    root = rec.get("repo_root", ".")
+    # Diff tree-to-tree: writing the live worktree as a throwaway tree
+    # makes untracked files show as changes, not as deletions.
+    current = worktree_tree(root)
+    if not current:
+        print("diff failed: could not capture the current worktree state")
+        return 1
+    try:
+        proc = subprocess.run(
+            ["git", "-C", root, "--no-pager", "diff",
+             rec.get("commit", ""), current],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"diff failed: {exc}")
+        return 1
+    if proc.returncode != 0:
+        print(proc.stderr.strip() or "diff failed")
+        return 1
+    out = proc.stdout.strip()
+    print(out if out else "No differences — the worktree matches the snapshot.")
+    return 0
+
+
+# ---------- stats ----------
+
+def cmd_stats(_: argparse.Namespace) -> int:
+    """Near-miss metrics: what the gate caught, what insurance covered."""
+    records = load_trail()
+    if not records:
+        print("No trail records yet.")
+        return 0
+
+    sessions = {str(r.get("session", "")) for r in records}
+    denies: dict[str, int] = {}
+    allows: dict[str, int] = {}
+    observes = 0
+    unbacked_covered = 0
+    write_backups = 0
+    for r in records:
+        action, gate = r.get("action"), str(r.get("gate", "?"))
+        if action == "deny":
+            denies[gate] = denies.get(gate, 0) + 1
+        elif action == "allow":
+            allows[gate] = allows.get(gate, 0) + 1
+        elif action == "observe":
+            if gate == "write_backup":
+                write_backups += 1
+            else:
+                observes += 1
+        cert = (r.get("extra") or {}).get("certificate") or {}
+        unbacked_covered += int(cert.get("covered_unbacked", 0) or 0)
+
+    print(f"GateGuard stats — {len(records)} records, {len(sessions)} session(s)\n")
+    print("Denies (ceremonies forced):")
+    for gate, n in sorted(denies.items(), key=lambda kv: -kv[1]):
+        print(f"  {n:5}  {gate}")
+    if not denies:
+        print("      (none)")
+    print("\nAllows:")
+    for gate, n in sorted(allows.items(), key=lambda kv: -kv[1]):
+        print(f"  {n:5}  {gate}")
+    print(f"\nObserved investigation events: {observes}")
+    insured = allows.get("destructive_insured", 0)
+    print(f"Insured destructions: {insured}")
+    print(f"  … covering {unbacked_covered} file(s) that existed ONLY in the "
+          "working tree")
+    print(f"Write overwrites backed up: {write_backups}")
     return 0
 
 
@@ -247,12 +438,36 @@ def build_parser() -> argparse.ArgumentParser:
     p_audit.add_argument("--format", choices=["text", "md", "jsonl"], default="text")
     p_audit.set_defaults(func=cmd_audit)
 
+    p_anchor = sub.add_parser(
+        "anchor",
+        help="pin the audit-trail chain head into the current git repo "
+        "(refs/gateguard/anchors/); --push sends anchors to a remote",
+    )
+    p_anchor.add_argument("--push", metavar="REMOTE",
+                          help="push anchors to this git remote (e.g. origin)")
+    p_anchor.set_defaults(func=cmd_anchor)
+
     p_snap = sub.add_parser(
         "snapshots",
         help="list pre-destruction snapshots and their rollback commands",
     )
     p_snap.add_argument("--tail", type=int, default=20, help="last N snapshots (default: 20)")
+    p_snap.add_argument("--prune", action="store_true",
+                        help="delete snapshots older than --keep-days")
+    p_snap.add_argument("--keep-days", type=int, default=30,
+                        help="retention window for --prune (default: 30)")
     p_snap.set_defaults(func=cmd_snapshots)
+
+    p_diff = sub.add_parser(
+        "diff", help="diff the worktree against a snapshot (before restoring)"
+    )
+    p_diff.add_argument("id", help="snapshot id from `gateguard snapshots`")
+    p_diff.set_defaults(func=cmd_diff)
+
+    p_stats = sub.add_parser(
+        "stats", help="near-miss metrics: denies, insured destructions, backups"
+    )
+    p_stats.set_defaults(func=cmd_stats)
 
     p_reset = sub.add_parser("reset", help="clear in-session state")
     p_reset.set_defaults(func=cmd_reset)

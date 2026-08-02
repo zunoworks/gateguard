@@ -84,6 +84,35 @@ def _git(args: list[str], cwd: str, env: dict | None = None) -> str | None:
     return proc.stdout.strip()
 
 
+def worktree_tree(root: str) -> str | None:
+    """Write the current worktree (tracked + untracked, .gitignore
+    respected) as a tree object via a throwaway index. None on failure.
+    Shared by snapshot capture and `gateguard diff` — the same trick
+    that lets a snapshot include untracked files lets a diff show them
+    as changes instead of deletions."""
+    tmp_index = None
+    try:
+        with NamedTemporaryFile(prefix="gateguard-index-", delete=False) as tmp:
+            tmp_index = tmp.name
+        # git refuses an existing empty file as an index; it wants to
+        # create it itself.
+        os.unlink(tmp_index)
+
+        env = dict(os.environ)
+        env["GIT_INDEX_FILE"] = tmp_index
+        if _git(["add", "-A", "."], root, env) is None:
+            return None
+        return _git(["write-tree"], root, env) or None
+    except OSError:
+        return None
+    finally:
+        if tmp_index:
+            try:
+                os.unlink(tmp_index)
+            except OSError:
+                pass
+
+
 def capture_snapshot(cwd: str | None = None, *, command: str = "") -> Snapshot | None:
     """Snapshot the git worktree containing `cwd`. None if impossible.
 
@@ -95,27 +124,22 @@ def capture_snapshot(cwd: str | None = None, *, command: str = "") -> Snapshot |
     if not root:
         return None
 
-    tmp_index = None
     try:
-        with NamedTemporaryFile(prefix="gateguard-index-", delete=False) as tmp:
-            tmp_index = tmp.name
-        # git refuses an existing empty file as an index; it wants to
-        # create it itself.
-        os.unlink(tmp_index)
-
-        env = dict(os.environ)
-        env["GIT_INDEX_FILE"] = tmp_index
-
         head = _git(["rev-parse", "--verify", "--quiet", "HEAD"], root)
 
-        if _git(["add", "-A", "."], root, env) is None:
-            return None
-        tree = _git(["write-tree"], root, env)
+        tree = worktree_tree(root)
         if not tree:
             return None
+        env = dict(os.environ)
 
         now = time.time()
-        message = "gateguard: pre-destruction snapshot"
+        # Passive anchor: embedding the current chain head makes every
+        # insured destruction pin the trail into a git object — one more
+        # place a wholesale log rewrite has to reach and can't silently.
+        from . import log as _log
+
+        chain_head = _log._last_hash(_log.GATE_LOG_PATH)
+        message = f"gateguard: pre-destruction snapshot\n\nchain-head: {chain_head}"
         commit_args = ["commit-tree", tree, "-m", message]
         if head:
             commit_args += ["-p", head]
@@ -138,12 +162,6 @@ def capture_snapshot(cwd: str | None = None, *, command: str = "") -> Snapshot |
         return snap
     except OSError:
         return None
-    finally:
-        if tmp_index:
-            try:
-                os.unlink(tmp_index)
-            except OSError:
-                pass
 
 
 def _record(snap: Snapshot, command: str) -> None:
@@ -164,6 +182,34 @@ def _record(snap: Snapshot, command: str) -> None:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except OSError:
         pass
+
+
+def backup_file_blob(file_path: str) -> dict | None:
+    """Stash a file's current content as a git blob before a Write
+    overwrites it (v0.7.0 write insurance).
+
+    A Write replaces the whole file; if the old content was uncommitted
+    it would exist nowhere afterwards. `git hash-object -w` stores it in
+    the object database in O(bytes) with automatic dedup — no working
+    tree, index, or HEAD impact. Returns {"blob", "restore"} or None
+    (missing file / not a repo / git failure — best-effort by design;
+    enforcement never depends on this)."""
+    try:
+        path = Path(file_path)
+        if not path.is_file():
+            return None
+        root = _git(["rev-parse", "--show-toplevel"], str(path.parent))
+        if not root:
+            return None
+        blob = _git(["hash-object", "-w", "--", str(path)], root)
+        if not blob:
+            return None
+        return {
+            "blob": blob,
+            "restore": f"git cat-file -p {blob} > {file_path}",
+        }
+    except OSError:
+        return None
 
 
 def snapshot_contains(snap: Snapshot, rel_paths: list[str]) -> bool:
