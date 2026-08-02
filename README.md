@@ -132,7 +132,7 @@ Restart Claude Code and the gate is active.
 | **Read-before-Edit** | `Edit` on a file not yet `Read` this session | Read the file first |
 | **Fact-force Edit** | First `Edit` per file | Quote the user's instruction, list importers, detect conflicts between existing patterns and instruction (instruction wins), verify data schemas from real records |
 | **Fact-force Write** | First `Write` per file | Quote the user's instruction, confirm no duplicate exists, detect conflicts (instruction wins), verify data schemas |
-| **Fact-force destructive Bash** | `rm -rf`, `git reset --hard`, `drop table`, etc. | List what will be destroyed, give a rollback, quote the instruction |
+| **Fact-force destructive Bash** | `rm -rf`, `git reset --hard`, `drop table`, etc. | Reconcile its fact list with the blast radius GateGuard measured itself; the retry then runs only once a verified pre-destruction snapshot exists (v0.7.0) |
 | **Fact-force routine Bash** | First `Bash` per session (v0.6.0: read-only commands — `ls`, `cat`, `grep`, `git status`, safe pipes — bypass this gate entirely) | Quote the user's current instruction |
 | **Bughunt** (v0.4.0+, opt-in) | 3+ Edit/Write ops to non-docs files since the last test/build run | Run tests, verify the build, exercise the change on real input, check edge cases |
 
@@ -172,6 +172,78 @@ on high-impact paths. All four switches live under `audit:` in
 The bughunt gate has a 300-second cooldown after firing, so one missed
 reminder does not pin the session. Bypass per-session with
 `GATEGUARD_BUGHUNT_DISABLED=1`.
+
+## Destructive insurance & the flight recorder (v0.7.0)
+
+PainBench showed where the 5-family models still fail: the destructive
+edge. v0.7.0 rebuilds the destructive gate around three ideas no
+deny-only guardrail has, because they all require GateGuard's evidence
+ledger and observed-behavior architecture:
+
+**1. The gate measures the blast radius itself.** The old gate asked
+the AI to list what a command would destroy — and had no way to know if
+the list was honest. Now GateGuard runs its own reconnaissance before
+speaking and puts the numbers in the deny message:
+
+```
+GateGuard measured the blast radius itself:
+- Targets: /repo/build
+- Contents: 1247 files, 3.2 MB
+- ⚠ 3 file(s) exist ONLY in the working tree (untracked/modified —
+  no git history has them): build/cache.db, notes.md, .env.local
+```
+
+The unbacked count is the number that matters: those files exist
+nowhere except the working tree. That is exactly what the 2026
+incident reports lost.
+
+**2. Verified insurance, not hopeful backups.** The v0.6.x destructive
+gate was a wall — every attempt denied, forever. A wall teaches the
+model to route around it (write the `rm` into a script, run the
+script), and a bypassed wall protects nobody. v0.7.0 replaces it: the
+first attempt pays the fact ceremony, and the retry is allowed **only
+after** GateGuard captures a git snapshot of the worktree **and
+verifies the files at risk are actually inside it**. No verified
+snapshot → the deny stands (the fail-closed path *is* the old wall).
+The snapshot is a real commit under `refs/gateguard/snapshots/` —
+off every branch, safe from gc, untouched index and HEAD — and
+rollback is one recorded command:
+
+```
+git restore --source=<commit> --worktree -- .
+```
+
+**3. A flight recorder, not a log.** Every gate decision is hash-chained
+(each record carries the previous record's hash — edit or delete any
+line and `gateguard audit --verify` reports the exact break). Records
+carry session and cwd, observed investigation is mirrored into the
+trail, and evidence-based passes record *which* observations justified
+them. Insured destructions carry their full certificate: blast radius,
+snapshot id, verification result, rollback command.
+
+```
+$ gateguard audit
+GateGuard audit trail
+chain: VERIFIED — 214 chained record(s)
+
+Session a1b2c3 — /home/you/project
+2026-08-02 12:01:02    obs   Read     evidence             target=src/auth.py
+2026-08-02 12:01:09    obs   Grep     evidence             target=src pattern='import auth'
+2026-08-02 12:01:15  allow   Edit     evidence_pass        file=src/auth.py  [justified by: read src/auth.py; grep src]
+2026-08-02 12:03:40  DENY    Bash     fact_force_destructive cmd='rm -rf build'  [blast: 1247 files, 3 unbacked]
+2026-08-02 12:04:02  allow   Bash     destructive_insured  cmd='rm -rf build'  [INSURED snapshot=20260802T030402Z-ab12cd34 verified=True rollback: git restore --source=ab12cd34 --worktree -- .]
+```
+
+`gateguard audit --format md` exports the same trail for an incident
+ticket or compliance review; `--verify` exits non-zero on a broken
+chain, so CI can require an intact trail.
+
+Honest scoping: the snapshot covers the current git worktree only.
+Targets outside the repo (or non-git directories) are uninsurable — the
+gate says so and keeps denying instead of pretending. Database drops,
+`dd`, and force-pushes get no filesystem recon; the report marks them
+opaque. Upgrading pre-v0.7.0 installs: re-run `gateguard init` once to
+widen the PreToolUse hook timeout for snapshot capture.
 
 Since **v0.4.1**, the bughunt gate skips edits to `.md` / `.txt` / `.rst` /
 `.log` / `.gitignore` and conventional filenames (`CHANGELOG`, `TODO`,
@@ -214,6 +286,11 @@ audit:                  # v0.6.0 recognition audit (all default true)
   trivial_pass: true    # comment-only edits skip the ceremony
   high_risk_guard: true # auth/payment/migration/.env/CI: never exempted
 
+insurance:               # v0.7.0 destructive insurance + flight recorder
+  snapshot_pass: true    # deny once, then allow only with a VERIFIED snapshot
+  blast_recon: true      # measure the blast radius; numbers go in the deny
+  evidence_log: true     # mirror observed investigation into the audit trail
+
 destructive_bash_extra:
   - "supabase db reset"
   - "prisma migrate reset"
@@ -239,12 +316,17 @@ ignore_paths:
 ```bash
 gateguard init [path] [--force] [--skip-hook]
 gateguard logs [--tail N]
+gateguard audit [--verify] [--session ID] [--tail N] [--format text|md|jsonl]
+gateguard snapshots [--tail N]
 gateguard reset
 gateguard --version
 ```
 
 - `init` — write `.gateguard.yml` and register both hooks
 - `logs` — print recent gate events from `~/.gateguard/gate_log.jsonl`
+- `audit` — flight-recorder report (investigation → decisions → insured
+  destructions) with hash-chain verification; `--verify` exits 1 on tampering
+- `snapshots` — list pre-destruction snapshots with their rollback commands
 - `reset` — clear the current session's state file (`~/.gateguard/.session_state_{id}.json`)
 
 ## How it works

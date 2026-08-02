@@ -76,6 +76,91 @@ def test_init_registers_both_hooks(
     )
 
 
+def test_audit_reports_and_verifies(capsys: pytest.CaptureFixture[str]) -> None:
+    from gateguard.cli import cmd_audit
+    from gateguard.log import log_event
+
+    log_event("Edit", {"file_path": "/tmp/a.py", "old_string": "x"}, "passed", "allow")
+
+    parser = build_parser()
+    rc = cmd_audit(parser.parse_args(["audit"]))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "chain: VERIFIED" in out
+    assert "file=/tmp/a.py" in out
+
+    rc = cmd_audit(parser.parse_args(["audit", "--verify"]))
+    assert rc == 0
+
+
+def test_audit_verify_fails_on_tamper(capsys: pytest.CaptureFixture[str]) -> None:
+    import json
+
+    from gateguard import log as log_mod
+    from gateguard.cli import cmd_audit
+    from gateguard.log import log_event
+
+    log_event("Edit", {"file_path": "/tmp/a.py", "old_string": "x"}, "passed", "allow")
+    rec = json.loads(log_mod.GATE_LOG_PATH.read_text(encoding="utf-8").strip())
+    rec["summary"] = "doctored"
+    log_mod.GATE_LOG_PATH.write_text(json.dumps(rec) + "\n", encoding="utf-8")
+
+    parser = build_parser()
+    rc = cmd_audit(parser.parse_args(["audit", "--verify"]))
+    assert rc == 1
+    assert "BROKEN" in capsys.readouterr().out
+
+
+def test_snapshots_lists_rollback(capsys: pytest.CaptureFixture[str]) -> None:
+    import json
+
+    from gateguard import state as state_mod
+    from gateguard.cli import cmd_snapshots
+
+    (state_mod.STATE_DIR / "snapshots.jsonl").write_text(
+        json.dumps({
+            "ts": 1.0, "id": "x-ab12", "commit": "ab12", "ref": "refs/gateguard/snapshots/x-ab12",
+            "repo_root": "/proj", "command": "rm -rf build",
+            "rollback": "git restore --source=ab12 --worktree -- .",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    parser = build_parser()
+    rc = cmd_snapshots(parser.parse_args(["snapshots"]))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "x-ab12" in out
+    assert "git restore --source=ab12" in out
+
+
+def test_init_upgrades_pre_hook_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A pre-v0.7.0 install (3s PreToolUse budget) is widened for snapshot capture."""
+    import json
+
+    from gateguard import cli as cli_mod
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(json.dumps({
+        "hooks": {
+            "PreToolUse": [{
+                "matcher": "Edit|Write|Bash",
+                "hooks": [{"type": "command", "command": "gateguard-hook",
+                           "timeout": 3000}],
+            }],
+        }
+    }), encoding="utf-8")
+    monkeypatch.setattr(cli_mod, "CLAUDE_SETTINGS_PATH", settings_path)
+
+    parser = build_parser()
+    cmd_init(parser.parse_args(["init", str(tmp_path)]))
+
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    hook = settings["hooks"]["PreToolUse"][0]["hooks"][0]
+    assert hook["timeout"] == cli_mod.PRE_HOOK_TIMEOUT_MS
+
+
 def test_init_upgrades_v05_read_only_matcher(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

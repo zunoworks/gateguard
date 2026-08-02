@@ -1,4 +1,4 @@
-"""GateGuard CLI — `gateguard init | logs | reset | --version`."""
+"""GateGuard CLI — `gateguard init | logs | audit | snapshots | reset | --version`."""
 
 from __future__ import annotations
 
@@ -6,17 +6,23 @@ import argparse
 import json
 import shutil
 import sys
+import time
 from pathlib import Path
 
 from . import __version__
+from . import log as log_mod
 from .config import CONFIG_FILENAME, default_config_yaml
-from .log import GATE_LOG_PATH
+from .snapshot import list_snapshots
 from .state import _state_file, clear_state
+from .trail import load_trail, render_report, verify_chain
 
 
 CLAUDE_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 HOOK_COMMAND = "gateguard-hook"
 READ_TRACKER_COMMAND = "gateguard-read-tracker"
+# v0.7.0: the gate may capture + verify a pre-destruction snapshot inside
+# the hook, so the PreToolUse budget is wider than the observer's.
+PRE_HOOK_TIMEOUT_MS = 15000
 HOOK_TIMEOUT_MS = 3000
 # v0.6.0: the read tracker became the evidence ledger — it observes
 # Grep/Glob/investigative Bash in addition to Read.
@@ -62,11 +68,18 @@ def _register_hook(settings: dict) -> bool:
 
     # PreToolUse: the fact-forcing gate
     pre = hooks.setdefault("PreToolUse", [])
-    has_pre = any(
-        isinstance(h, dict) and h.get("command", "").strip() == HOOK_COMMAND
-        for group in pre if isinstance(group, dict)
-        for h in (group.get("hooks", []) or [])
-    )
+    has_pre = False
+    for group in pre:
+        if not isinstance(group, dict):
+            continue
+        for h in (group.get("hooks", []) or []):
+            if isinstance(h, dict) and h.get("command", "").strip() == HOOK_COMMAND:
+                has_pre = True
+                # Pre-v0.7.0 installs registered a 3s budget — too tight
+                # for snapshot capture. Upgrade in place.
+                if h.get("timeout", 0) < PRE_HOOK_TIMEOUT_MS:
+                    h["timeout"] = PRE_HOOK_TIMEOUT_MS
+                    modified = True
     if not has_pre:
         pre.append({
             "matcher": "Edit|Write|Bash",
@@ -74,7 +87,7 @@ def _register_hook(settings: dict) -> bool:
                 {
                     "type": "command",
                     "command": HOOK_COMMAND,
-                    "timeout": HOOK_TIMEOUT_MS,
+                    "timeout": PRE_HOOK_TIMEOUT_MS,
                 }
             ],
         })
@@ -141,11 +154,11 @@ def cmd_init(args: argparse.Namespace) -> int:
 # ---------- logs ----------
 
 def cmd_logs(args: argparse.Namespace) -> int:
-    if not GATE_LOG_PATH.exists():
-        print(f"No log at {GATE_LOG_PATH}")
+    if not log_mod.GATE_LOG_PATH.exists():
+        print(f"No log at {log_mod.GATE_LOG_PATH}")
         return 0
 
-    lines = GATE_LOG_PATH.read_text(encoding="utf-8").splitlines()
+    lines = log_mod.GATE_LOG_PATH.read_text(encoding="utf-8").splitlines()
     tail = lines[-args.tail :] if args.tail > 0 else lines
 
     for raw in tail:
@@ -159,6 +172,37 @@ def cmd_logs(args: argparse.Namespace) -> int:
         summary = rec.get("summary", "")
         marker = "DENY" if action == "deny" else "pass"
         print(f"{marker:5} {tool:8} {gate:25} {summary}")
+    return 0
+
+
+# ---------- audit ----------
+
+def cmd_audit(args: argparse.Namespace) -> int:
+    """Flight-recorder report + tamper-evidence verification."""
+    chain = verify_chain()
+    if args.verify:
+        print(chain.describe())
+        return 0 if chain.ok else 1
+
+    records = load_trail(session=args.session, tail=args.tail)
+    print(render_report(records, chain, fmt=args.format))
+    return 0 if chain.ok else 1
+
+
+# ---------- snapshots ----------
+
+def cmd_snapshots(args: argparse.Namespace) -> int:
+    records = list_snapshots(tail=args.tail)
+    if not records:
+        print("No snapshots recorded.")
+        return 0
+    for rec in records:
+        ts = rec.get("ts", 0)
+        when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)) if ts else "?"
+        print(f"{when}  {rec.get('id', '?')}")
+        print(f"    repo:     {rec.get('repo_root', '?')}")
+        print(f"    command:  {rec.get('command', '?')}")
+        print(f"    rollback: {rec.get('rollback', '?')}")
     return 0
 
 
@@ -190,6 +234,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_logs = sub.add_parser("logs", help="show recent gate events")
     p_logs.add_argument("--tail", type=int, default=20, help="show last N entries (default: 20)")
     p_logs.set_defaults(func=cmd_logs)
+
+    p_audit = sub.add_parser(
+        "audit",
+        help="flight-recorder report: investigation → decisions → insured "
+        "destructions, with tamper-evidence check",
+    )
+    p_audit.add_argument("--verify", action="store_true",
+                         help="only verify the hash chain (exit 1 on break)")
+    p_audit.add_argument("--session", help="limit to one session id")
+    p_audit.add_argument("--tail", type=int, default=0, help="last N records only")
+    p_audit.add_argument("--format", choices=["text", "md", "jsonl"], default="text")
+    p_audit.set_defaults(func=cmd_audit)
+
+    p_snap = sub.add_parser(
+        "snapshots",
+        help="list pre-destruction snapshots and their rollback commands",
+    )
+    p_snap.add_argument("--tail", type=int, default=20, help="last N snapshots (default: 20)")
+    p_snap.set_defaults(func=cmd_snapshots)
 
     p_reset = sub.add_parser("reset", help="clear in-session state")
     p_reset.set_defaults(func=cmd_reset)

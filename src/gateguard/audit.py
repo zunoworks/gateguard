@@ -179,6 +179,48 @@ def risk_tier(tool_name: str, tool_input: dict, file_path: str) -> str:
 
 # ---------- ledger consult ----------
 
+def matching_evidence(
+    file_path: str, state: dict, now: float, limit: int = 8
+) -> list[dict]:
+    """Fresh ledger entries that justify recognition of `file_path`.
+
+    v0.7.0: this is also the causal link the audit trail records — when
+    a pass is granted on evidence, the entries returned here go into the
+    log record, so `gateguard audit` can answer "what did the AI
+    actually check before this mutation". Read entries of the file
+    itself are included for the trail; evidence_level() ignores them
+    (reads are tracked via read_files).
+    """
+    entries = state.get("evidence", [])
+    if not isinstance(entries, list):
+        entries = []
+
+    p = Path(file_path)
+    stem = p.stem
+    parent = str(p.parent)
+    out: list[dict] = []
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        try:
+            if now - float(e.get("ts", 0) or 0) > EVIDENCE_TTL_SEC:
+                continue
+        except (TypeError, ValueError):
+            continue
+        pattern = str(e.get("pattern", "") or "")
+        target = str(e.get("target", "") or "")
+        if e.get("kind") == "read":
+            if target == file_path:
+                out.append(e)
+            continue
+        if stem and (stem in pattern or stem in target):
+            out.append(e)
+        elif target and (parent == target
+                         or parent.startswith(target.rstrip("/") + "/")):
+            out.append(e)
+    return out[-limit:]
+
+
 def evidence_level(file_path: str, state: dict, now: float) -> str:
     """'deep' | 'touched' | 'none' — observed recognition of the target.
 
@@ -191,32 +233,12 @@ def evidence_level(file_path: str, state: dict, now: float) -> str:
     """
     read_files = set(state.get("read_files", []))
     touched = file_path in read_files
-    entries = state.get("evidence", [])
-    if not isinstance(entries, list):
-        entries = []
+    hit = any(
+        e.get("kind") != "read"
+        for e in matching_evidence(file_path, state, now, limit=EVIDENCE_MAX_ENTRIES)
+    )
 
     p = Path(file_path)
-    stem = p.stem
-    parent = str(p.parent)
-    hit = False
-    for e in entries:
-        if not isinstance(e, dict) or e.get("kind") == "read":
-            continue
-        try:
-            if now - float(e.get("ts", 0) or 0) > EVIDENCE_TTL_SEC:
-                continue
-        except (TypeError, ValueError):
-            continue
-        pattern = str(e.get("pattern", "") or "")
-        target = str(e.get("target", "") or "")
-        if stem and (stem in pattern or stem in target):
-            hit = True
-            break
-        if target and (parent == target
-                       or parent.startswith(target.rstrip("/") + "/")):
-            hit = True
-            break
-
     if hit and (touched or not p.exists()):
         return "deep"
     if touched:

@@ -64,10 +64,31 @@ class AuditConfig:
 
 
 @dataclass
+class InsuranceConfig:
+    """v0.7.0 destructive insurance + flight-recorder trail.
+
+    snapshot_pass ON changes the destructive gate from "always deny"
+    (v0.6.x — a wall the model learns to route around) to "deny once,
+    then allow the retry ONLY with a verified pre-destruction snapshot
+    in hand". It never allows without captured-and-verified insurance,
+    so the fail-closed path is exactly the old wall."""
+
+    snapshot_pass: bool = True
+    # Measure the blast radius (file counts, unbacked files) and put the
+    # numbers in the deny message + audit trail.
+    blast_recon: bool = True
+    # Record observed investigation (Read/Grep/Glob/investigative Bash)
+    # into the audit trail so `gateguard audit` shows what the AI
+    # checked before each mutation.
+    evidence_log: bool = True
+
+
+@dataclass
 class Config:
     enabled: bool = True
     gates: GateConfig = field(default_factory=GateConfig)
     audit: AuditConfig = field(default_factory=AuditConfig)
+    insurance: InsuranceConfig = field(default_factory=InsuranceConfig)
     destructive_bash_extra: list[str] = field(default_factory=list)
     # v0.6.1 (issue #1): extra patterns the bughunt gate recognizes as a
     # verification run (e.g. "flutter test"). OR-joined with the built-ins,
@@ -142,6 +163,13 @@ def load_config(start: Path | None = None) -> Config:
             if key in audit_raw and isinstance(audit_raw[key], bool):
                 setattr(ac, key, audit_raw[key])
 
+    insurance_raw = data.get("insurance") or {}
+    if isinstance(insurance_raw, dict):
+        ic = cfg.insurance
+        for key in ("snapshot_pass", "blast_recon", "evidence_log"):
+            if key in insurance_raw and isinstance(insurance_raw[key], bool):
+                setattr(ic, key, insurance_raw[key])
+
     extra = data.get("destructive_bash_extra") or []
     if isinstance(extra, list):
         cfg.destructive_bash_extra = [str(x) for x in extra if isinstance(x, (str, int))]
@@ -196,6 +224,20 @@ audit:
   # auth/payment/migration/.env/CI paths: never exempted by evidence, and
   # the gate message adds an explicit user-confirmation demand.
   high_risk_guard: true
+
+# v0.7.0: Destructive insurance + flight-recorder audit trail.
+insurance:
+  # Destructive commands: deny once (fact ceremony), then allow the retry
+  # ONLY after capturing a git snapshot that provably contains the files
+  # about to be destroyed. No verified snapshot -> keep denying (v0.6.x
+  # wall semantics). Rollback: git restore --source=<commit> --worktree -- .
+  snapshot_pass: true
+  # Measure the blast radius (file count, bytes, files that exist ONLY in
+  # the working tree) and put the numbers in the deny message + trail.
+  blast_recon: true
+  # Record observed investigation into the audit trail so
+  # `gateguard audit` shows what the AI checked before each mutation.
+  evidence_log: true
 
 # Additional destructive shell patterns (regex, OR-joined with built-ins)
 destructive_bash_extra: []
