@@ -1,10 +1,8 @@
 # GateGuard
 
-![PyPI](https://img.shields.io/pypi/v/gateguard-ai) ![Python](https://img.shields.io/pypi/pyversions/gateguard-ai) ![License](https://img.shields.io/pypi/l/gateguard-ai) ![CI](https://github.com/zunoworks/gateguard/actions/workflows/ci.yml/badge.svg) [![Shipped in ECC](https://img.shields.io/badge/Shipped_in-ECC-blueviolet)](https://github.com/affaan-m/everything-claude-code/blob/main/skills/gateguard/SKILL.md)
+![PyPI](https://img.shields.io/pypi/v/gateguard-ai) ![Python](https://img.shields.io/pypi/pyversions/gateguard-ai) ![License](https://img.shields.io/pypi/l/gateguard-ai) ![CI](https://github.com/zunoworks/gateguard/actions/workflows/ci.yml/badge.svg)
 
 **A fact-forcing hook gate for Claude Code.**
-
-> Also shipped as a skill in [everything-claude-code](https://github.com/affaan-m/everything-claude-code). The JS port lives there; this repo is the Python upstream.
 
 > **Not to be confused** with `gateguard-personal` — an internal hook used at ZUNO WORKS with its own version series (`v4.x`). This repository is the public Python package `gateguard-ai` (`v0.x.y` series).
 
