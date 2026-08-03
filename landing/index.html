@@ -188,6 +188,14 @@ gateguard init</code></pre>
       <div class="card"><b>Near-misses become numbers</b>
         <code>gateguard stats</code>: denies forced, insured
         destructions, files that existed only in the working tree.</div>
+      <div class="card"><b>A hook, not a prompt</b>
+        Runs even under <code>--dangerously-skip-permissions</code>.
+        Deny-lists match literal strings; the gate reads flag soup,
+        scripts, git clean and terraform teardown.</div>
+      <div class="card"><b>Beyond checkpoints</b>
+        Rewind reverts the agent's edits. What dies in the field is
+        uncommitted work destroyed by <i>shell commands</i> — held by
+        no checkpoint, provably held by the snapshot.</div>
     </div>
   </div>
 </section>
