@@ -29,8 +29,11 @@ import re
 import sys
 from pathlib import Path
 
+# Segment-bounded ([^\n;|&]*): the mutation verb and the config filename
+# must be in the SAME shell segment, or `git diff > out.txt && cat
+# .gateguard.yml` false-positives as tampering.
 TAMPER_BASH_RE = re.compile(
-    r"(?:\brm\b|\bmv\b|\btee\b|\bsed\s+-i|>>?)[^\n]*(?:\.gateguard|settings\.json)",
+    r"(?:\brm\b|\bmv\b|\btee\b|\bsed\s+-i|>>?)[^\n;|&]*(?:\.gateguard|settings\.json)",
 )
 TAMPER_PATH_RE = re.compile(r"\.gateguard\.ya?ml|settings\.json")
 

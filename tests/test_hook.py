@@ -225,9 +225,14 @@ def test_script_bypass_is_scanned_and_gated(
     "terraform destroy -auto-approve",
     "terraform state rm aws_db_instance.main",
     "terraform apply -input=false -auto-approve",
+    "terraform apply tfplan",             # saved plan applies with no confirm
+    "terraform apply -input=false prod.tfplan",
     "tofu destroy",
+    "tofu apply plan.out",
     "git clean -d -f",
     "git clean -fdx",
+    "git clean --force",
+    "git clean -d --force",
 ])
 def test_destructive_pattern_regressions(command: str) -> None:
     from gateguard.hook import BUILTIN_DESTRUCTIVE_BASH
@@ -244,6 +249,7 @@ def test_destructive_pattern_regressions(command: str) -> None:
     "the file was truncated",
     "terraform plan",           # look-only infra ops stay routine
     "terraform apply",          # interactive apply keeps its own confirm
+    "terraform apply -var region=us",  # key=value arg is not a plan file
     "terraform state list",
     "git clean -n",             # dry run
 ])
