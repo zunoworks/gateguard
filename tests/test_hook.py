@@ -221,6 +221,13 @@ def test_script_bypass_is_scanned_and_gated(
     "echo 'enabled: false' > .gateguard.yml",
     "sed -i 's/true/false/' .gateguard.yml",
     "echo '{}' > ~/.claude/settings.json",
+    # 2026 field-report classes: infra teardown and git clean variants.
+    "terraform destroy -auto-approve",
+    "terraform state rm aws_db_instance.main",
+    "terraform apply -input=false -auto-approve",
+    "tofu destroy",
+    "git clean -d -f",
+    "git clean -fdx",
 ])
 def test_destructive_pattern_regressions(command: str) -> None:
     from gateguard.hook import BUILTIN_DESTRUCTIVE_BASH
@@ -235,6 +242,10 @@ def test_destructive_pattern_regressions(command: str) -> None:
     "echo done > output.log",  # redirects to ordinary files stay routine
     "git checkout --force-help-text",
     "the file was truncated",
+    "terraform plan",           # look-only infra ops stay routine
+    "terraform apply",          # interactive apply keeps its own confirm
+    "terraform state list",
+    "git clean -n",             # dry run
 ])
 def test_non_destructive_commands_stay_clean(command: str) -> None:
     from gateguard.hook import BUILTIN_DESTRUCTIVE_BASH

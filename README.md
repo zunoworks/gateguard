@@ -130,7 +130,7 @@ Restart Claude Code and the gate is active.
 | **Read-before-Edit** | `Edit` on a file not yet `Read` this session | Read the file first |
 | **Fact-force Edit** | First `Edit` per file | Quote the user's instruction, list importers, detect conflicts between existing patterns and instruction (instruction wins), verify data schemas from real records |
 | **Fact-force Write** | First `Write` per file | Quote the user's instruction, confirm no duplicate exists, detect conflicts (instruction wins), verify data schemas |
-| **Fact-force destructive Bash** | `rm -rf`, `git reset --hard`, `drop table`, etc. | Reconcile its fact list with the blast radius GateGuard measured itself; the retry then runs only once a verified pre-destruction snapshot exists (v0.7.0) |
+| **Fact-force destructive Bash** | `rm` (recursive/force, any flag order), `git reset --hard`, `git clean -f` variants, `terraform destroy` / `state rm` / auto-approved `apply`, `drop table`, etc. | Reconcile its fact list with the blast radius GateGuard measured itself; the retry then runs only once a verified pre-destruction snapshot exists (v0.7.0) |
 | **Fact-force routine Bash** | First `Bash` per session (v0.6.0: read-only commands — `ls`, `cat`, `grep`, `git status`, safe pipes — bypass this gate entirely) | Quote the user's current instruction |
 | **Bughunt** (v0.4.0+, opt-in) | 3+ Edit/Write ops to non-docs files since the last test/build run | Run tests, verify the build, exercise the change on real input, check edge cases |
 
@@ -265,6 +265,24 @@ entire content; uncommitted old content would survive nowhere. Before
 an allowed overwrite, GateGuard stashes the old content as a git blob
 (`git hash-object -w` — deduplicated, invisible, no index/HEAD impact)
 and records the one-line restore in the trail.
+
+### Where this sits among the usual defenses
+
+The defenses people actually deploy each leave a gap this closes:
+
+- **Permission deny-lists** (`Bash(rm -rf:*)` in settings) match literal
+  strings — flag order (`rm -fr`), `git clean`, terraform, and scripts
+  all walk past them.
+- **Checkpoints / rewind** revert the edits the agent made through its
+  tools. The 2026 losses people report are different: **uncommitted and
+  untracked files destroyed by shell commands** — state no checkpoint
+  or git history holds. That is exactly what the verified snapshot
+  captures before the command runs.
+- **Permission prompts** get skipped — `--dangerously-skip-permissions`
+  is popular precisely because prompts are friction. GateGuard is a
+  hook, not a prompt: **it runs even in skip-permissions mode**, and its
+  friction concentrates at the destructive edge instead of on every
+  call.
 
 Honest scoping: the snapshot covers the current git worktree only.
 Targets outside the repo (or non-git directories) are uninsurable — the

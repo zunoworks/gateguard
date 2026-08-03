@@ -86,9 +86,18 @@ BUILTIN_DESTRUCTIVE_BASH = re.compile(
     # in any order or position. Plain `rm file` stays routine.
     r"(?:\brm\s+(?:-[a-z]*\s+)*-[a-z]*[rf]"
     r"|\brm\s+--(?:recursive|force)\b"
-    r"|\bgit\s+reset\s+--hard\b|\bgit\s+checkout\s+--(?:\s|$)|\bgit\s+clean\s+-f"
+    r"|\bgit\s+reset\s+--hard\b|\bgit\s+checkout\s+--(?:\s|$)"
+    # git clean with f anywhere in the flag soup (-fd, -d -f, -fdx) —
+    # 2026 field reports: "banning rm doesn't stop git clean".
+    r"|\bgit\s+clean\s+(?:-[a-z]*\s+)*-[a-z]*f"
     r"|\bdrop\s+table\b|\bdelete\s+from\b|\btruncate\b|\bgit\s+push\s+--force\b"
     r"|\bdd\s+if="
+    # Infra teardown — the single most expensive 2026 incident class
+    # (production DB + its snapshots gone via permitted terraform).
+    # `plan` and interactive `apply` stay routine; destroy, state
+    # surgery, and auto-approved apply pay the ceremony.
+    r"|\b(?:terraform|tofu)\s+(?:destroy|state\s+rm|workspace\s+delete)"
+    r"|\b(?:terraform|tofu)\s+apply\s+[^\n;|&]*-auto-approve"
     # v0.7.0: in-language deletion — `python -c "shutil.rmtree(...)"`
     # and friends were a regex-free bypass of the destructive gate.
     # rimraf needs an argument: `npm install rimraf` is not destruction.
