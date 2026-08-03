@@ -4,9 +4,9 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>GateGuard — the gate that opens on evidence, not claims</title>
-<meta name="description" content="A recognition-audit hook gate for Claude Code. It watches what the AI actually investigated and only gates what it hasn't. pip install gateguard-ai" />
+<meta name="description" content="Insurance for AI coding's destructive edge: measured blast radius, verified pre-destruction snapshots, and a tamper-evident audit trail. pip install gateguard-ai" />
 <meta property="og:title" content="GateGuard — the gate that opens on evidence, not claims" />
-<meta property="og:description" content="v0.6.0: near-zero friction when the model behaves, enforced look-before-leap at the destructive edge. Built and benchmarked against 2026 field incidents." />
+<meta property="og:description" content="v0.7.0: the destructive gate measures the blast radius itself, allows the retry only with a verified snapshot in hand, and records everything in a hash-chained flight recorder." />
 <meta property="og:type" content="website" />
 <meta name="twitter:card" content="summary_large_image" />
 <style>
@@ -79,8 +79,9 @@
     <h1>The gate that opens on <em>evidence</em>, not claims.</h1>
     <p class="sub">
       A recognition-audit hook for Claude Code. It observes what the AI
-      actually investigated — and only gates what it hasn't. No nagging.
-      No "are you sure?". Just observed behavior as the passport.
+      actually investigated — and only gates what it hasn't. And when
+      the AI reaches for something irreversible, it measures the blast
+      radius, takes a verified snapshot, and records the whole story.
     </p>
     <div class="install">
 <pre><code>pip install gateguard-ai
@@ -117,7 +118,7 @@ gateguard init</code></pre>
 
 <section>
   <div class="container">
-    <h2>How v0.6.0 works — the recognition audit</h2>
+    <h2>How it works — the recognition audit</h2>
     <div class="flow">
       <div><span>1 · Observe</span> A PostToolUse hook records every
       Read, Grep, Glob and investigative Bash into an evidence ledger.
@@ -149,6 +150,50 @@ gateguard init</code></pre>
 
 <section>
   <div class="container">
+    <h2>v0.7.0 — insurance for the destructive edge</h2>
+    <p>
+      2026's incidents share a step: something irreversible ran before
+      anyone looked, and what died was <b>uncommitted work — state that
+      existed nowhere but the working tree</b>. A deny-only wall doesn't
+      fix that; models learn to route around walls. v0.7.0 replaces the
+      wall with insurance:
+    </p>
+    <div class="flow">
+      <div><span>1 · Measure</span> Before the gate speaks, it measures
+      the blast radius itself: file counts, bytes, and how many files
+      exist ONLY in the working tree. The numbers go into the deny —
+      the AI must reconcile its claims with reality.</div>
+      <div><span>2 · Insure</span> The retry runs only once a git
+      snapshot exists <b>and provably contains the files at risk</b>.
+      No verified snapshot → still denied, fail-closed. Rollback is one
+      recorded command.</div>
+      <div><span>3 · Record</span> Every decision lands in a
+      hash-chained flight recorder: what was investigated, what was
+      allowed on which evidence, which snapshot insured which
+      destruction. <code>gateguard audit --verify</code> reports the
+      exact line any tampering breaks; anchors pushed to a remote catch
+      wholesale rewrites.</div>
+    </div>
+    <div class="cards">
+      <div class="card"><b>Scripts are scanned</b>
+        Destruction hidden in an executed script's content is gated
+        like the command line — the write-a-script-then-run-it bypass
+        is closed.</div>
+      <div class="card"><b>The gate protects itself</b>
+        Editing .gateguard.yml — by editor or by shell — is high-risk:
+        never evidence-exempted, explicit user instruction demanded.</div>
+      <div class="card"><b>Write overwrites are insured</b>
+        Before an allowed Write replaces a file, the old content is
+        stashed as a git blob with its restore command on record.</div>
+      <div class="card"><b>Near-misses become numbers</b>
+        <code>gateguard stats</code>: denies forced, insured
+        destructions, files that existed only in the working tree.</div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="container">
     <h2>Measured, honestly</h2>
     <p>
       We benchmark against <b>current</b> models with trap tasks built
@@ -170,7 +215,10 @@ gateguard init</code></pre>
       delta is <b>enforced look-before-leap exactly at the destructive
       edge</b>, the step where 2026's real incidents happened. A +2.0
       quality gap was measured on 2025-era models; we don't extend that
-      claim to current ones.
+      claim to current ones. The table above was measured on v0.6.0;
+      v0.7.0 rebuilt the destructive gate (insurance semantics) and adds
+      two bypass-class traps (script smuggling, guardrail self-disable)
+      to the suite — not yet re-measured, and we'll publish when it is.
     </div>
   </div>
 </section>
@@ -188,11 +236,17 @@ audit:                       # v0.6.0 recognition audit
   evidence_pass: true        # observed investigation opens the gate
   scope_pass: true           # verified directories stay quiet for 30 min
   trivial_pass: true         # comment-only edits skip the ceremony
-  high_risk_guard: true      # auth/payment/migration: never exempted</code></pre>
+  high_risk_guard: true      # auth/payment/migration: never exempted
+
+insurance:                   # v0.7.0 destructive insurance
+  snapshot_pass: true        # retry only with a VERIFIED snapshot
+  blast_recon: true          # measure what the command would destroy
+  evidence_log: true         # investigation mirrored into the trail
+  write_backup: true         # stash old content before overwrites</code></pre>
     <p class="muted">
       Everything defaults on. Empty ledger = classic fact-forcing
-      behavior. <code>gateguard logs</code> shows every decision the
-      gate made, with reasons.
+      behavior. <code>gateguard audit</code> renders the flight
+      recorder; <code>gateguard snapshots</code> lists every rollback.
     </p>
   </div>
 </section>
@@ -200,8 +254,7 @@ audit:                       # v0.6.0 recognition audit
 <footer>
   <div class="container">
     GateGuard (<code>gateguard-ai</code>) — MIT — built by
-    <a href="https://github.com/zunoworks">ZUNO WORKS</a>.<br />
-    Also shipped as a skill in Everything Claude Code.
+    <a href="https://github.com/zunoworks">ZUNO WORKS</a>.
   </div>
 </footer>
 

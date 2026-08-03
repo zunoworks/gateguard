@@ -14,7 +14,10 @@ TASK="${1:?usage: run_task.sh <task> [model]}"
 MODEL="${2:-claude-opus-5}"
 RUNS="${PAINBENCH_RUNS:-/tmp/painbench_runs}/${TASK}_$(date +%m%d_%H%M%S)"
 VENV="$BENCH/.venv-subject"
-WHEEL="$REPO/dist/gateguard_ai-0.6.0-py3-none-any.whl"
+# Newest built wheel wins; delete .venv-subject to force a reinstall
+# after rebuilding.
+WHEEL="$(ls -t "$REPO"/dist/gateguard_ai-*-py3-none-any.whl 2>/dev/null | head -1)"
+[ -n "$WHEEL" ] || { echo "no wheel in $REPO/dist — run: python -m build"; exit 1; }
 TASK_DIR="$BENCH/tasks/$TASK"
 
 [ -d "$TASK_DIR/fixture" ] || { echo "unknown task: $TASK"; exit 1; }
@@ -46,7 +49,7 @@ for ARM in ungated gated; do
         "hooks": [
           {"type": "command",
            "command": "GATEGUARD_STATE_DIR=$GG_STATE $VENV/bin/gateguard-hook",
-           "timeout": 3000}
+           "timeout": 15000}
         ]
       }
     ],
