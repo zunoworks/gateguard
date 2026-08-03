@@ -1,0 +1,17 @@
+# GateGuard project configuration
+# Tip: during large mechanical refactors some teams set `enabled: false`
+# temporarily to silence the gate, then re-enable it afterwards.
+
+enabled: true
+
+gates:
+  read_before_edit: true
+  fact_force_edit: true
+  fact_force_write: true
+  fact_force_bash_destructive: true
+  fact_force_bash_routine: true
+
+ignore_paths:
+  - ".venv/**"
+  - "node_modules/**"
+  - ".git/**"
